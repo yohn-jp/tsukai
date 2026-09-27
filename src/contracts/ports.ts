@@ -8,11 +8,19 @@ import type {
 } from "./types.js";
 
 export interface ExecutionObserver {
+  /** Called before the adapter submits a prompt or reports establishment. */
+  onEstablished?(binding: ExecutionBinding): Promise<void>;
   onOutput(chunk: Uint8Array): void;
   onExit(receipt: PhysicalReceipt): void;
   onError(error: Error): void;
   onSignal?(signal: HarnessSignal): void;
   onBindingUpdate?(binding: ExecutionBinding): void;
+  /** Backend cursors are committed only after preceding observations. */
+  onProgress?(cursor: {
+    eventSeq: number;
+    stdoutOffset: number;
+    stderrOffset: number;
+  }): void;
 }
 
 export interface ExecutionPort<Request = RunCreateInput["request"]> {
@@ -22,6 +30,11 @@ export interface ExecutionPort<Request = RunCreateInput["request"]> {
     observer: ExecutionObserver,
     workspace?: { cwd: string; workspaceSessionId?: string },
   ): Promise<ExecutionBinding>;
+  resume?(
+    binding: ExecutionBinding,
+    observer: ExecutionObserver,
+    cursor: { eventSeq: number; stdoutOffset: number; stderrOffset: number },
+  ): Promise<void>;
   input(executionRunId: string, command: { kind: "release" }): Promise<void>;
   retire(executionRunId: string, reason: "settled" | "cancel"): Promise<void>;
   dispose(): Promise<void>;

@@ -9,6 +9,7 @@ import type {
 } from "./types.js";
 import type { ExecutionPort, HarnessPort, JournalPort } from "./ports.js";
 import type { RuntimeLimits } from "./limits.js";
+import type { DurableStore } from "./durable.js";
 
 export interface RunOperations<
   Request = RunCreateInput["request"],
@@ -45,6 +46,7 @@ export interface RunServiceOptions<
   execution: ExecutionPort<Request>;
   harness: HarnessPort;
   journal: JournalPort;
+  durableStore?: DurableStore;
   limits?: Partial<RuntimeLimits>;
   harnessIdentity?: { name: Harness; version: string };
   validateInput?: (
