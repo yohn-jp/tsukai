@@ -31,6 +31,7 @@
     "test:domain": "vitest run test/domain test/application --passWithNoTests",
     "test:observation": "vitest run test/observation --passWithNoTests",
     "test:mock": "vitest run test/mock test/testing --passWithNoTests",
+    "test:pi": "vitest run test/pi --passWithNoTests",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "verify": "pnpm run format:check && pnpm run build && pnpm run typecheck && pnpm run test",
