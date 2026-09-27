@@ -154,6 +154,12 @@ try {
     SUPPORTED_PI_REVISION,
     "Pi source revision is unsupported",
   );
+  const trackedChanges = execFileSync(
+    "git",
+    ["-C", sourceRoot, "status", "--porcelain", "--untracked-files=no"],
+    { encoding: "utf8", timeout: 10_000 },
+  ).trim();
+  assert.equal(trackedChanges, "", "Pi source checkout must be clean");
   const version = execFileSync(executable, ["--version"], {
     encoding: "utf8",
     timeout: 10_000,
