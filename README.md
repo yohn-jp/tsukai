@@ -52,6 +52,8 @@ The Pi adapter does not spawn a process. M1a's direct Pi runner remains testing 
 
 Jinushi [#5](https://github.com/yohn-jp/jinushi/issues/5) and [#8](https://github.com/yohn-jp/jinushi/issues/8) are integrated on current Jinushi main. Tsukai now uses a stable submission identity for retry-safe Run creation and request identity plus Run generation for retry-safe physical input/close/cancel controls. Per-Run observation consumes Jinushi's notifier-driven follow surface and preserves explicit event/output gaps. The current Tsukai runtime is still ephemeral and has no resident owner or Tsukai restart recovery; that remains M2. See [the frozen M1b contract](docs/M1B-JINUSHI.md).
 
+For live M1b certification, run `pnpm run certify:jinushi` with `TSUKAI_PI_SOURCE_DIR`, `TSUKAI_PI_EXECUTABLE`, `TSUKAI_JINUSHI_STATE_DIR`, and `TSUKAI_JINUSHI_WORKSPACE` set to absolute local paths. The command uses the real Jinushi supervisor and the pinned real Pi RPC executable, performs `get_state`, retires the Jinushi-owned process, and requires a terminal physical receipt.
+
 ## Recording and replay
 
 `tsukai demo` shows multiple mock runs, their events and results, and their relationship. `demo --json` writes one metadata observation envelope per LF-delimited line to stdout. Diagnostics go to stderr. `replay` validates an exported journal and reconstructs its public metadata projection without starting workers. Metadata replay cannot recover discarded result text. Histories and subscriptions have finite limits and expose incomplete history as gaps.
