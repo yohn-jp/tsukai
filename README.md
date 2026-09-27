@@ -46,11 +46,11 @@ Set `TSUKAI_PI_LIVE_PROVIDER` and `TSUKAI_PI_LIVE_MODEL` as well to opt into pro
 
 The Pi adapter does not spawn a process. M1a's direct Pi runner remains testing infrastructure. There is no production direct-spawn fallback.
 
-## Jinushi execution integration (M1b partial)
+## Jinushi execution integration (M1b)
 
 `createJinushiClient(stateDir)` connects to Jinushi's local protocol v1 IPC. `createJinushiPiExecutionPort({ client, executable, environment })` supplies the production `PiDuplexExecutionPort` to `createPiRuntime`. Pass an admitted absolute `workspace.cwd` when creating each AgentRun. The port submits one noninteractive Jinushi Run for one Pi RPC process, sends RPC bytes through Jinushi input, reads ordered stdout by offset, keeps stderr as bounded diagnostics, and reports Jinushi terminal receipts as physical evidence. Tsukai continues to own AgentRun and Pi semantics; `executionRunId` is the Jinushi Run ID, separate from the Pi `sessionId`.
 
-This integration is single attempt for `run` and `input`. If a response is lost, the operation may have happened. Tsukai reports uncertainty and does not retry or infer nonexecution. Jinushi [#5](https://github.com/yohn-jp/jinushi/issues/5) must add durable submission and control identities before ambiguous retries can be safe. The adapter consumes Jinushi's current per-Run event follow; Jinushi [#8](https://github.com/yohn-jp/jinushi/issues/8) tracks event-driven multiplexing and input-writer ownership. The current Tsukai runtime is still ephemeral and has no resident owner or restart recovery. See [the frozen M1b contract](docs/M1B-JINUSHI.md).
+Jinushi [#5](https://github.com/yohn-jp/jinushi/issues/5) and [#8](https://github.com/yohn-jp/jinushi/issues/8) are integrated on current Jinushi main. Tsukai now uses a stable submission identity for retry-safe Run creation and request identity plus Run generation for retry-safe physical input/close/cancel controls. Per-Run observation consumes Jinushi's notifier-driven follow surface and preserves explicit event/output gaps. The current Tsukai runtime is still ephemeral and has no resident owner or Tsukai restart recovery; that remains M2. See [the frozen M1b contract](docs/M1B-JINUSHI.md).
 
 ## Recording and replay
 
