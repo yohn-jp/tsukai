@@ -24,7 +24,7 @@ Jinushi #8 is complete on current main.
 
 Per-Run event/output follow is notifier-driven rather than the former primary 100 ms polling fallback. Jinushi also provides bounded all-Run watch, telemetry follow, explicit history gaps/watermarks, and interactive writer ownership. M1b uses the per-Run event/output surfaces needed for noninteractive Pi RPC and does not add a competing poller.
 
-Interactive writer leases are not required by the current Pi path because M1b deliberately launches Pi as noninteractive stdio. They remain part of the current Jinushi contract for future interactive consumers.
+Jinushi writer ownership also gates physical stdin mutations for the noninteractive Pi path. Tsukai acquires a bounded writer lease around each serialized stdin/close-input mutation and releases it afterward; a lost release remains bounded by Jinushi lease expiry. This does not turn the Pi process into an interactive PTY Run.
 
 ## Completion evidence
 
