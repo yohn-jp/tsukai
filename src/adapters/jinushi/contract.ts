@@ -2,7 +2,11 @@
 export interface JinushiRunSpec {
   argv: string[];
   cwd: string;
-  environment: { mode: "replace" | "inherit-supervisor"; set?: Record<string, string>; unset?: string[] };
+  environment: {
+    mode: "replace" | "inherit-supervisor";
+    set?: Record<string, string>;
+    unset?: string[];
+  };
   interactive: false;
   lifetime: { mode: "detached" };
   limits?: { outputBytes?: number; wallTimeMs?: number };
@@ -23,7 +27,14 @@ export interface JinushiReceipt {
 
 export interface JinushiRun {
   runId: string;
-  state: "accepted" | "starting" | "running" | "terminating" | "reconciling" | "terminal" | "uncertain";
+  state:
+    | "accepted"
+    | "starting"
+    | "running"
+    | "terminating"
+    | "reconciling"
+    | "terminal"
+    | "uncertain";
   ownership?: { backend: string; pid?: number };
   output: {
     stdout: { observedBytes: number; retainedFrom: number };
@@ -38,7 +49,9 @@ export interface JinushiEvent {
   runId: string;
   seq: number;
   kind: string;
-  payload?: { output?: { stream: string; bytes?: number; observedBytes?: number } };
+  payload?: {
+    output?: { stream: string; bytes?: number; observedBytes?: number };
+  };
 }
 
 export interface JinushiEventPage {
@@ -61,8 +74,18 @@ export interface JinushiClient {
   run(spec: JinushiRunSpec): Promise<JinushiRun>;
   input(runId: string, bytes: Uint8Array): Promise<void>;
   closeInput(runId: string): Promise<void>;
-  output(runId: string, stream: "stdout" | "stderr", offset: number, limit: number): Promise<JinushiOutputPage>;
-  followEvents(runId: string, after: number, signal: AbortSignal, onPage: (page: JinushiEventPage) => Promise<void>): Promise<void>;
+  output(
+    runId: string,
+    stream: "stdout" | "stderr",
+    offset: number,
+    limit: number,
+  ): Promise<JinushiOutputPage>;
+  followEvents(
+    runId: string,
+    after: number,
+    signal: AbortSignal,
+    onPage: (page: JinushiEventPage) => Promise<void>,
+  ): Promise<void>;
   inspect(runId: string): Promise<JinushiRun>;
   await(runId: string, signal?: AbortSignal): Promise<JinushiRun>;
   cancel(runId: string): Promise<void>;
