@@ -391,6 +391,31 @@ class JinushiPiExecution implements PiDuplexExecution {
     await this.ready;
   }
 
+  private async withWriterLease<T>(
+    requestId: string,
+    mutate: (writerToken: string) => Promise<T>,
+  ): Promise<T> {
+    const writerToken = await retryAmbiguous("writer acquire", () =>
+      this.client.acquireWriter(this.executionRunId, requestId),
+    );
+    try {
+      return await mutate(writerToken);
+    } finally {
+      try {
+        await retryAmbiguous("writer release", () =>
+          this.client.releaseWriter(
+            this.executionRunId,
+            requestId,
+            writerToken,
+          ),
+        );
+      } catch {
+        // A lost release is bounded by Jinushi's writer-lease expiry. It must
+        // not rewrite the already established mutation result.
+      }
+    }
+  }
+
   write(bytes: Uint8Array): Promise<void> {
     if (this.reportedError) {
       return Promise.reject(
@@ -444,12 +469,15 @@ class JinushiPiExecution implements PiDuplexExecution {
       try {
         const requestId = controlRequestId();
         const expectedGeneration = this.currentRun.generation;
-        const updated = await retryAmbiguous("input", () =>
-          this.client.input(
-            this.executionRunId,
-            requestId,
-            expectedGeneration,
-            owned,
+        const updated = await this.withWriterLease(requestId, (writerToken) =>
+          retryAmbiguous("input", () =>
+            this.client.input(
+              this.executionRunId,
+              requestId,
+              expectedGeneration,
+              writerToken,
+              owned,
+            ),
           ),
         );
         this.currentRun = updated;
@@ -482,11 +510,14 @@ class JinushiPiExecution implements PiDuplexExecution {
       try {
         const requestId = controlRequestId();
         const expectedGeneration = this.currentRun.generation;
-        const updated = await retryAmbiguous("close-input", () =>
-          this.client.closeInput(
-            this.executionRunId,
-            requestId,
-            expectedGeneration,
+        const updated = await this.withWriterLease(requestId, (writerToken) =>
+          retryAmbiguous("close-input", () =>
+            this.client.closeInput(
+              this.executionRunId,
+              requestId,
+              expectedGeneration,
+              writerToken,
+            ),
           ),
         );
         this.currentRun = updated;
