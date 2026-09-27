@@ -26,7 +26,6 @@ const DEFINITIVE_RUN_REJECTIONS = new Set([
   "cwd-failure",
   "invalid-request",
   "response-too-large",
-  "storage-failure",
   "supervisor-closed",
   "unsupported-capability",
 ]);

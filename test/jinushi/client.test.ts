@@ -219,27 +219,30 @@ describe("Jinushi protocol v1 client", () => {
     expect(server.requests).toHaveLength(1);
   });
 
-  it("marks a failed Run response ambiguous even when Jinushi returns an error frame", async () => {
-    const server = await fakeSupervisor((socket) => {
-      sendFrame(socket, {
-        version: 1,
-        error: {
-          code: "invalid-response",
-          message: "response encoding failed",
-        },
+  it.each(["invalid-response", "storage-failure"])(
+    "marks a %s Run response ambiguous",
+    async (code) => {
+      const server = await fakeSupervisor((socket) => {
+        sendFrame(socket, {
+          version: 1,
+          error: {
+            code,
+            message: "Run effect cannot be proven",
+          },
+        });
       });
-    });
-    const error = await createJinushiClient(server.stateDir)
-      .run(runSpec())
-      .catch((caught: unknown) => caught);
+      const error = await createJinushiClient(server.stateDir)
+        .run(runSpec())
+        .catch((caught: unknown) => caught);
 
-    expect(error).toMatchObject({
-      kind: "remote",
-      code: "invalid-response",
-      ambiguousEffect: true,
-    });
-    expect(server.requests).toHaveLength(1);
-  });
+      expect(error).toMatchObject({
+        kind: "remote",
+        code,
+        ambiguousEffect: true,
+      });
+      expect(server.requests).toHaveLength(1);
+    },
+  );
 
   it("recognizes an explicit pre-effect Run rejection", async () => {
     const server = await fakeSupervisor((socket) => {
