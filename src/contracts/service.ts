@@ -2,6 +2,7 @@ import type {
   ObservationEnvelope,
   Page,
   RunCreateInput,
+  HarnessName,
   RunResult,
   RunSnapshot,
   WaitOptions,
@@ -9,8 +10,11 @@ import type {
 import type { ExecutionPort, HarnessPort, JournalPort } from "./ports.js";
 import type { RuntimeLimits } from "./limits.js";
 
-export interface RunOperations {
-  create(input: RunCreateInput): Promise<RunSnapshot>;
+export interface RunOperations<
+  Request = RunCreateInput["request"],
+  Harness extends HarnessName = "mock",
+> {
+  create(input: RunCreateInput<Request, Harness>): Promise<RunSnapshot>;
   get(agentRunId: string): RunSnapshot;
   list(options?: { cursor?: string; limit?: number }): Page<RunSnapshot>;
   children(
@@ -26,16 +30,27 @@ export interface RunOperations {
   result(agentRunId: string): RunResult;
 }
 
-export interface RunService {
-  runs: RunOperations;
+export interface RunService<
+  Request = RunCreateInput["request"],
+  Harness extends HarnessName = "mock",
+> {
+  runs: RunOperations<Request, Harness>;
   dispose(): Promise<void>;
 }
 
-export interface RunServiceOptions {
-  execution: ExecutionPort;
+export interface RunServiceOptions<
+  Request = RunCreateInput["request"],
+  Harness extends HarnessName = "mock",
+> {
+  execution: ExecutionPort<Request>;
   harness: HarnessPort;
   journal: JournalPort;
   limits?: Partial<RuntimeLimits>;
+  harnessIdentity?: { name: Harness; version: string };
+  validateInput?: (
+    input: RunCreateInput<Request, Harness>,
+    limits: RuntimeLimits,
+  ) => RunCreateInput<Request, Harness>;
 }
 
 export interface MockRuntime extends RunService {

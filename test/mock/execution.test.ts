@@ -106,8 +106,8 @@ describe("mock fixture execution port", () => {
 
       await execution.retire(first.executionRunId, "cancel");
       await withDeadline(firstObserver.observed.receipt);
-      expect(() => process.kill(second.pid, 0)).not.toThrow();
-      expect(() => process.kill(third.pid, 0)).not.toThrow();
+      expect(() => process.kill(second.pid!, 0)).not.toThrow();
+      expect(() => process.kill(third.pid!, 0)).not.toThrow();
       expect(() => process.kill(process.pid, 0)).not.toThrow();
 
       await execution.input(second.executionRunId, { kind: "release" });

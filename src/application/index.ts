@@ -8,6 +8,7 @@ import {
 } from "../contracts/privacy.js";
 import type {
   Activity,
+  HarnessName,
   JsonObject,
   ObservationDraft,
   Page,
@@ -221,7 +222,10 @@ function toJsonObject(value: unknown): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
-export function createRunService(options: RunServiceOptions): RunService {
+export function createRunService<
+  Request = RunCreateInput["request"],
+  Harness extends HarnessName = "mock",
+>(options: RunServiceOptions<Request, Harness>): RunService<Request, Harness> {
   const limits = resolveLimits(options.limits);
   const runs = new Map<string, RunRecord>();
   const order: string[] = [];
@@ -533,11 +537,16 @@ export function createRunService(options: RunServiceOptions): RunService {
     };
   };
 
-  const service: RunService = {
+  const service: RunService<Request, Harness> = {
     runs: {
       create: async (input) => {
         if (disposed) throw new Error("Run service has been disposed");
-        const validated = validateInput(input, limits);
+        const validated = options.validateInput
+          ? options.validateInput(input, limits)
+          : (validateInput(input as RunCreateInput, limits) as RunCreateInput<
+              Request,
+              Harness
+            >);
         if (runs.size >= limits.maxRuns)
           throw new RangeError("Maximum retained run count reached");
         if (validated.parentRunId !== undefined) {
@@ -551,6 +560,10 @@ export function createRunService(options: RunServiceOptions): RunService {
         const createdAt = new Date().toISOString();
         const run: RunRecord = {
           agentRunId,
+          harness: options.harnessIdentity ?? {
+            name: "mock",
+            version: "mock-fixture-v1",
+          },
           ...(validated.parentRunId === undefined
             ? {}
             : { parentRunId: validated.parentRunId }),

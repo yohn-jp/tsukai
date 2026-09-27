@@ -13,10 +13,10 @@ export interface ExecutionObserver {
   onError(error: Error): void;
 }
 
-export interface ExecutionPort {
+export interface ExecutionPort<Request = RunCreateInput["request"]> {
   start(
     agentRunId: string,
-    request: RunCreateInput["request"],
+    request: Request,
     observer: ExecutionObserver,
   ): Promise<ExecutionBinding>;
   input(executionRunId: string, command: { kind: "release" }): Promise<void>;

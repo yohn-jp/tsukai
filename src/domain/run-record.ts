@@ -2,6 +2,7 @@ import type { HarnessDecoder } from "../contracts/ports.js";
 import type {
   Activity,
   ExecutionBinding,
+  HarnessName,
   Lifecycle,
   Outcome,
   PhysicalReceipt,
@@ -18,6 +19,7 @@ export interface OutcomeCandidate {
 
 export interface RunRecord {
   agentRunId: string;
+  harness: { name: HarnessName; version: string };
   parentRunId?: string;
   metadata: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };
@@ -103,7 +105,7 @@ export function toSnapshot(run: RunRecord): RunSnapshot {
   return {
     agentRunId: run.agentRunId,
     ...(run.parentRunId === undefined ? {} : { parentRunId: run.parentRunId }),
-    harness: { name: "mock", version: "mock-fixture-v1" },
+    harness: { ...run.harness },
     metadata: { ...run.metadata },
     ...(run.workspace === undefined
       ? {}
@@ -127,7 +129,15 @@ export function toSnapshot(run: RunRecord): RunSnapshot {
           execution: {
             executionRunId: run.execution.executionRunId,
             backend: run.execution.backend,
-            pid: run.execution.pid,
+            ...(run.execution.pid === undefined
+              ? {}
+              : { pid: run.execution.pid }),
+            ...(run.execution.sessionId === undefined
+              ? {}
+              : { sessionId: run.execution.sessionId }),
+            ...(run.execution.piVersion === undefined
+              ? {}
+              : { piVersion: run.execution.piVersion }),
           },
         }),
     ...(run.receipt === undefined

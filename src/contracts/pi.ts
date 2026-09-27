@@ -1,12 +1,9 @@
-import type { PhysicalReceipt } from "./types.js";
+import type { PhysicalReceipt, RunCreateInput } from "./types.js";
 
-export interface PiRunCreateInput {
-  harness: "pi";
-  request: { prompt: string };
-  parentRunId?: string;
-  metadata?: Record<string, string>;
-  workspace?: { cwd: string; workspaceSessionId?: string };
+export interface PiRunRequest {
+  prompt: string;
 }
+export type PiRunCreateInput = RunCreateInput<PiRunRequest, "pi">;
 
 /** Physical execution is supplied by the caller. The Pi adapter never starts a process. */
 export interface PiTransportObserver {
