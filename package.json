@@ -25,7 +25,7 @@
     "tsukai": "./dist/cli/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:domain": "vitest run test/domain test/application --passWithNoTests",

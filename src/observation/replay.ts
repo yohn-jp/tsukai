@@ -156,7 +156,7 @@ function validateSnapshot(
   );
   if (!isRecord(value.metadata))
     return invalid("run.snapshot metadata must be an object");
-  const metadata: Record<string, string> = {};
+  const metadata = Object.create(null) as Record<string, string>;
   const metadataKeys = Object.keys(value.metadata);
   if (metadataKeys.length > limits.maxMetadataEntries) {
     return invalid("run.snapshot metadata exceeds the entry limit");

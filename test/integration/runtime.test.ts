@@ -3,6 +3,37 @@ import { createMockRuntime } from "../../src/testing/index.js";
 import { replayJournal } from "../../src/observation/index.js";
 
 describe("integrated mock runtime", () => {
+  it("keeps result text out of replay and rejects private caller metadata", async () => {
+    const runtime = createMockRuntime();
+    try {
+      await expect(
+        runtime.runs.create({
+          harness: "mock",
+          request: { scenario: "normal" },
+          metadata: { secret: "private-value" },
+        }),
+      ).rejects.toThrow();
+      const run = await runtime.runs.create({
+        harness: "mock",
+        request: { scenario: "normal", reportedText: "private-result" },
+        metadata: { label: "safe" },
+      });
+      await runtime.runs.wait(run.agentRunId, { timeoutMs: 5000 });
+      expect(runtime.runs.result(run.agentRunId)).toMatchObject({
+        ready: true,
+        reportedText: "private-result",
+      });
+      const jsonl = runtime.journal.export();
+      expect(jsonl).not.toContain("private-result");
+      expect(jsonl).not.toContain("private-value");
+      expect(replayJournal(jsonl).runs).toEqual([
+        runtime.runs.get(run.agentRunId),
+      ]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
   it("keeps three actual workers and parent/child lifetimes independent", async () => {
     const runtime = createMockRuntime();
     try {

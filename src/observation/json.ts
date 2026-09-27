@@ -1,73 +1,11 @@
 import type { JsonObject, JsonValue } from "../contracts/types.js";
+import {
+  FORBIDDEN_JSON_KEYS,
+  isPrivatePayloadKey,
+} from "../contracts/privacy.js";
 
-const PRIVATE_EXACT = new Set([
-  "prompt",
-  "text",
-  "reportedtext",
-  "thinking",
-  "thought",
-  "content",
-  "message",
-  "arg",
-  "args",
-  "argument",
-  "arguments",
-  "result",
-  "stderr",
-  "environment",
-  "env",
-  "credential",
-  "credentials",
-  "secret",
-  "authorization",
-  "apikey",
-  "key",
-  "token",
-  "password",
-  "cookie",
-  "input",
-  "output",
-  "delta",
-  "error",
-  "stack",
-  "rawinput",
-  "rawoutput",
-  "rawbytes",
-]);
-const SAFE_USAGE_KEYS = new Set([
-  "input",
-  "output",
-  "token",
-  "tokens",
-  "inputtokens",
-  "outputtokens",
-  "prompttokens",
-  "completiontokens",
-  "cachedinputtokens",
-  "cachecreationinputtokens",
-  "totaltokens",
-  "reasoningtokens",
-]);
-const FORBIDDEN_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 const MAX_JSON_DEPTH = 16;
 const MAX_CONTAINER_ENTRIES = 1024;
-
-function isPrivateKey(key: string, value: unknown): boolean {
-  const normalized = key.replace(/[-_\s]/g, "").toLowerCase();
-  if (
-    SAFE_USAGE_KEYS.has(normalized) &&
-    typeof value === "number" &&
-    Number.isFinite(value)
-  ) {
-    return false;
-  }
-  if (PRIVATE_EXACT.has(normalized)) return true;
-  return (
-    /(?:prompt|text|thinking|thought|content|message|argument|result|stderr|environment|credential|secret|password|authorization|cookie|rawinput|rawoutput|rawbytes)/i.test(
-      normalized,
-    ) || /(?:access|refresh|api|auth)?token$|apikey/i.test(normalized)
-  );
-}
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -137,9 +75,9 @@ export function metadataJson(
         if (++entries > MAX_CONTAINER_ENTRIES) {
           throw new TypeError("JSON object contains too many fields");
         }
-        if (FORBIDDEN_KEYS.has(key))
+        if (FORBIDDEN_JSON_KEYS.has(key))
           throw new TypeError(`Forbidden JSON key: ${key}`);
-        if (isPrivateKey(key, current[key])) continue;
+        if (isPrivatePayloadKey(key, current[key])) continue;
         accountString(key);
         copy[key] = visit(current[key], depth + 1);
       }

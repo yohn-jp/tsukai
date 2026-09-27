@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { ExecutionObserver, HarnessSignal } from "../contracts/ports.js";
 import type { RuntimeLimits } from "../contracts/limits.js";
 import { DEFAULT_LIMITS } from "../contracts/limits.js";
+import {
+  FORBIDDEN_JSON_KEYS,
+  isPrivateMetadataKey,
+} from "../contracts/privacy.js";
 import type {
   Activity,
   JsonObject,
@@ -117,6 +121,14 @@ function validateInput(
     throw new RangeError("Run metadata has too many entries");
   }
   for (const [key, value] of entries) {
+    if (
+      key.length === 0 ||
+      Buffer.byteLength(key, "utf8") > 128 ||
+      FORBIDDEN_JSON_KEYS.has(key) ||
+      isPrivateMetadataKey(key)
+    ) {
+      throw new TypeError(`Run metadata key is unsupported: ${key}`);
+    }
     if (typeof value !== "string") {
       throw new TypeError("Run metadata values must be strings");
     }
@@ -132,7 +144,9 @@ function validateInput(
     if (
       workspaceInput === null ||
       typeof workspaceInput !== "object" ||
-      typeof (workspaceInput as { cwd?: unknown }).cwd !== "string"
+      typeof (workspaceInput as { cwd?: unknown }).cwd !== "string" ||
+      (workspaceInput as { cwd: string }).cwd.length === 0 ||
+      Buffer.byteLength((workspaceInput as { cwd: string }).cwd, "utf8") > 4096
     ) {
       throw new TypeError("Workspace must contain a cwd string");
     }
@@ -141,7 +155,9 @@ function validateInput(
     ).workspaceSessionId;
     if (
       workspaceSessionId !== undefined &&
-      typeof workspaceSessionId !== "string"
+      (typeof workspaceSessionId !== "string" ||
+        workspaceSessionId.length === 0 ||
+        Buffer.byteLength(workspaceSessionId, "utf8") > 256)
     ) {
       throw new TypeError("workspaceSessionId must be a string");
     }
