@@ -1,4 +1,4 @@
-/** Jinushi protocol v1 projection, checked against jinushi main@90e52ca. */
+/** Jinushi protocol v1 projection, checked against jinushi main@44c5003. */
 export interface JinushiRunSpec {
   argv: string[];
   cwd: string;
@@ -27,6 +27,7 @@ export interface JinushiReceipt {
 
 export interface JinushiRun {
   runId: string;
+  generation: number;
   state:
     | "accepted"
     | "starting"
@@ -71,9 +72,18 @@ export interface JinushiOutputPage {
 /** Each mutation is a single attempt. Transport loss never proves nonexecution. */
 export interface JinushiClient {
   capabilities(): Promise<{ backend: string }>;
-  run(spec: JinushiRunSpec): Promise<JinushiRun>;
-  input(runId: string, bytes: Uint8Array): Promise<void>;
-  closeInput(runId: string): Promise<void>;
+  run(submissionId: string, spec: JinushiRunSpec): Promise<JinushiRun>;
+  input(
+    runId: string,
+    requestId: string,
+    expectedGeneration: number,
+    bytes: Uint8Array,
+  ): Promise<JinushiRun>;
+  closeInput(
+    runId: string,
+    requestId: string,
+    expectedGeneration: number,
+  ): Promise<JinushiRun>;
   output(
     runId: string,
     stream: "stdout" | "stderr",
@@ -88,5 +98,9 @@ export interface JinushiClient {
   ): Promise<void>;
   inspect(runId: string): Promise<JinushiRun>;
   await(runId: string, signal?: AbortSignal): Promise<JinushiRun>;
-  cancel(runId: string): Promise<void>;
+  cancel(
+    runId: string,
+    requestId: string,
+    expectedGeneration: number,
+  ): Promise<JinushiRun>;
 }
