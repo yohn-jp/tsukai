@@ -33,7 +33,7 @@
     "test:mock": "vitest run test/mock test/testing --passWithNoTests",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
-    "verify": "pnpm run format:check && pnpm run typecheck && pnpm run build && pnpm run test",
+    "verify": "pnpm run format:check && pnpm run build && pnpm run typecheck && pnpm run test",
     "test:package": "node scripts/test-package.mjs"
   },
   "devDependencies": {
