@@ -136,7 +136,7 @@ describe("Pi semantic adapter", () => {
   it.each([
     ["error", "error", "pi_assistant_error"],
     ["aborted", "abort", "pi_assistant_aborted"],
-    ["length", "success", "pi_assistant_length"],
+    ["length", "error", "pi_assistant_length"],
   ] as const)(
     "maps final assistant stopReason %s",
     (stopReason, status, reason) => {

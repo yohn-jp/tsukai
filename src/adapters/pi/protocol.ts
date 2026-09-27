@@ -16,6 +16,7 @@ export interface PiRpcClientOptions {
   maxBufferedBytes?: number;
   maxPendingRequests?: number;
   defaultTimeoutMs?: number;
+  onFailure?: (error: Error) => void;
 }
 
 export interface PiRpcClient {
@@ -168,7 +169,7 @@ export function createPiRpcClient(
   let writeChain: Promise<void> = Promise.resolve();
   let queuedWrites = 0;
 
-  const clearPending = (error: Error): void => {
+  const clearPending = (error: Error, report = false): void => {
     if (terminalError !== undefined) return;
     terminalError = error;
     for (const request of pending.values()) {
@@ -177,10 +178,11 @@ export function createPiRpcClient(
     }
     pending.clear();
     buffered = [];
+    if (report) options?.onFailure?.(error);
   };
 
   const protocolFailure = (message: string, code?: string): void => {
-    clearPending(new PiRpcProtocolError(message, code));
+    clearPending(new PiRpcProtocolError(message, code), true);
   };
 
   const validateResponse = (
@@ -386,7 +388,7 @@ export function createPiRpcClient(
         }
       });
       writeChain = write.catch((error: unknown) => {
-        clearPending(asError(error));
+        clearPending(asError(error), true);
       });
     });
   };
@@ -430,7 +432,7 @@ export function createPiRpcClient(
         }
       }
     } catch (error) {
-      clearPending(asError(error));
+      clearPending(asError(error), true);
     }
   };
 

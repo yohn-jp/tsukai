@@ -44,9 +44,13 @@ try {
     "declarations missing from package",
   );
   assert(
+    files.includes("dist/testing/pi/execution.js"),
+    "explicit Pi certification runner missing from package",
+  );
+  assert(
     files.every(
       (file) =>
-        !/(^|\/)(test|examples|docs|node_modules|\.env|\.npmrc)(\/|$)/.test(
+        !/(^|\/)(test|examples|docs|node_modules|\.env|\.npmrc|\.pi|auth\.json|session)(\/|$)/.test(
           file,
         ),
     ),
@@ -61,10 +65,14 @@ try {
   ]);
 
   const script = `import assert from 'node:assert/strict';
-import { createMemoryJournal, replayJournal } from 'tsukai';
-import { createMockRuntime } from 'tsukai/testing';
+import { createMemoryJournal, replayJournal, createPiRuntime, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION } from 'tsukai';
+import { createMockRuntime, createPiCertificationExecutionPort } from 'tsukai/testing';
 const journal = createMemoryJournal();
 assert.equal(typeof replayJournal, 'function');
+assert.equal(typeof createPiRuntime, 'function');
+assert.equal(typeof createPiCertificationExecutionPort, 'function');
+assert.equal(SUPPORTED_PI_VERSION, '0.87.1');
+assert.equal(SUPPORTED_PI_REVISION, '2b0a123de98318c2ff8069661721ce0c3794c34e');
 assert.equal(journal.read('missing').items.length, 0);
 const runtime = createMockRuntime();
 try {
@@ -92,7 +100,7 @@ try {
 
   await writeFile(
     join(consumer, "types.ts"),
-    `import { type RunSnapshot, createMemoryJournal } from 'tsukai';\nimport { createMockRuntime } from 'tsukai/testing';\nconst journal = createMemoryJournal();\nconst runtime = createMockRuntime();\nconst snapshot: RunSnapshot | undefined = undefined;\nvoid [journal, runtime, snapshot];\n`,
+    `import { type RunSnapshot, type PiDuplexExecutionPort, type PiRunCreateInput, createMemoryJournal, createPiRuntime } from 'tsukai';\nimport { createMockRuntime, createPiCertificationExecutionPort } from 'tsukai/testing';\nconst journal = createMemoryJournal();\nconst runtime = createMockRuntime();\nconst port: PiDuplexExecutionPort | undefined = undefined;\nconst input: PiRunCreateInput = { harness: 'pi', request: { prompt: 'hello' } };\nconst snapshot: RunSnapshot | undefined = undefined;\nvoid [journal, runtime, port, input, snapshot, createPiRuntime, createPiCertificationExecutionPort];\n`,
   );
   await writeFile(
     join(consumer, "tsconfig.json"),

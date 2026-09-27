@@ -670,7 +670,6 @@ class PiSemanticDecoder implements HarnessDecoder {
           reason = "pi_assistant_stop";
           break;
         case "length":
-          status = "success";
           reason = "pi_assistant_length";
           break;
         case "error":

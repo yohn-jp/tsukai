@@ -438,6 +438,7 @@ export function createRunService<
       processSignals(run, run.decoder.push(chunk));
     } catch {
       markUncertain(run, "harness-decoding-failed");
+      void requestRetirement(run, "cancel");
     }
   };
 
@@ -486,6 +487,19 @@ export function createRunService<
 
   const observerFor = (run: RunRecord): ExecutionObserver => ({
     onOutput: (chunk) => processOutput(run, chunk),
+    onSignal: (signal) => processSignals(run, [signal]),
+    onBindingUpdate: (binding) => {
+      if (run.lifecycle === "terminal") return;
+      if (run.execution === undefined) {
+        run.pendingBindingUpdate = binding;
+        return;
+      }
+      if (binding.executionRunId !== run.execution.executionRunId) {
+        markUncertain(run, "execution-binding-mismatch");
+        return;
+      }
+      update(run, { execution: { ...binding } });
+    },
     onExit: (receipt) => processExit(run, receipt),
     onError: (_error) => {
       if (run.lifecycle === "terminal") return;
@@ -604,6 +618,7 @@ export function createRunService<
             agentRunId,
             validated.request,
             observerFor(run),
+            validated.workspace,
           );
           const pendingReceipt = run.pendingReceipt;
           if (
@@ -615,7 +630,13 @@ export function createRunService<
             markUncertain(run, "execution-receipt-mismatch");
             return toSnapshot(run);
           }
-          update(run, { execution: { ...binding } });
+          const nextBinding = run.pendingBindingUpdate ?? binding;
+          delete run.pendingBindingUpdate;
+          if (nextBinding.executionRunId !== binding.executionRunId) {
+            markUncertain(run, "execution-binding-mismatch");
+            return toSnapshot(run);
+          }
+          update(run, { execution: { ...nextBinding } });
           if (pendingReceipt !== undefined) {
             delete run.pendingReceipt;
             run.receipt = cloneReceipt(pendingReceipt);

@@ -1,7 +1,7 @@
 {
   "name": "tsukai",
   "version": "0.1.0",
-  "description": "Ephemeral AgentRun lifecycle and observation mock preview",
+  "description": "AgentRun lifecycle and observation SDK with Pi RPC integration",
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -35,7 +35,8 @@
     "format:check": "prettier --check .",
     "format": "prettier --write .",
     "verify": "pnpm run format:check && pnpm run build && pnpm run typecheck && pnpm run test",
-    "test:package": "node scripts/test-package.mjs"
+    "test:package": "node scripts/test-package.mjs",
+    "certify:pi": "pnpm run build && node scripts/certify-pi.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

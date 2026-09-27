@@ -32,6 +32,7 @@ export interface RunRecord {
   execution?: ExecutionBinding;
   receipt?: PhysicalReceipt;
   pendingReceipt?: PhysicalReceipt;
+  pendingBindingUpdate?: ExecutionBinding;
   outcome?: Outcome;
   reason?: string;
   completeness: "complete" | "incomplete";
@@ -138,6 +139,9 @@ export function toSnapshot(run: RunRecord): RunSnapshot {
             ...(run.execution.piVersion === undefined
               ? {}
               : { piVersion: run.execution.piVersion }),
+            ...(run.execution.piRevision === undefined
+              ? {}
+              : { piRevision: run.execution.piRevision }),
           },
         }),
     ...(run.receipt === undefined

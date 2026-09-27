@@ -55,6 +55,7 @@ export interface ExecutionBinding {
   pid?: number;
   sessionId?: string;
   piVersion?: string;
+  piRevision?: string;
 }
 
 export interface RunSnapshot {

@@ -29,6 +29,7 @@ export interface PiDuplexExecutionPort {
   open(
     agentRunId: string,
     observer: PiTransportObserver,
+    workspace?: { cwd: string; workspaceSessionId?: string },
   ): Promise<PiDuplexExecution>;
   dispose(): Promise<void>;
 }
