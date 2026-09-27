@@ -69,7 +69,7 @@ export interface JinushiOutputPage {
   gap: boolean;
 }
 
-/** Each mutation is a single attempt. Transport loss never proves nonexecution. */
+/** Retry-safe identities are supplied explicitly; callers may replay only the same identified mutation. */
 export interface JinushiClient {
   capabilities(): Promise<{ backend: string }>;
   run(submissionId: string, spec: JinushiRunSpec): Promise<JinushiRun>;
