@@ -4,3 +4,4 @@ pnpm-lock.yaml
 AGENTS.md
 docs/ARCHITECTURE.md
 docs/IMPLEMENTATION.md
+.codegraph/cache
