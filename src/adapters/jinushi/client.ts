@@ -148,14 +148,24 @@ export function createJinushiClient(
       return { backend };
     },
 
-    async run(spec: JinushiRunSpec) {
+    async run(submissionId: string, spec: JinushiRunSpec) {
+      validateIdentity(submissionId, "run", "submissionId");
       validateRunSpec(spec);
-      const response = await request("run", { spec: toWireRunSpec(spec) });
+      const response = await request("run", {
+        submissionId,
+        spec: toWireRunSpec(spec),
+      });
       return requiredRun(response, "run", true);
     },
 
-    async input(runId: string, bytes: Uint8Array) {
+    async input(
+      runId: string,
+      requestId: string,
+      expectedGeneration: number,
+      bytes: Uint8Array,
+    ) {
       validateRunId(runId, "input");
+      validateControlIdentity(requestId, expectedGeneration, "input");
       if (!(bytes instanceof Uint8Array)) {
         throw validationError("input", "bytes must be a Uint8Array");
       }
@@ -166,12 +176,25 @@ export function createJinushiClient(
         );
       }
       const data = Buffer.from(bytes).toString("base64");
-      await request("input", { runId, data });
+      return requiredRun(
+        await request("input", { runId, requestId, expectedGeneration, data }),
+        "input",
+        false,
+      );
     },
 
-    async closeInput(runId: string) {
+    async closeInput(
+      runId: string,
+      requestId: string,
+      expectedGeneration: number,
+    ) {
       validateRunId(runId, "close-input");
-      await request("close-input", { runId });
+      validateControlIdentity(requestId, expectedGeneration, "close-input");
+      return requiredRun(
+        await request("close-input", { runId, requestId, expectedGeneration }),
+        "close-input",
+        false,
+      );
     },
 
     async output(
@@ -262,9 +285,18 @@ export function createJinushiClient(
       return result;
     },
 
-    async cancel(runId: string) {
+    async cancel(
+      runId: string,
+      requestId: string,
+      expectedGeneration: number,
+    ) {
       validateRunId(runId, "cancel");
-      await request("cancel", { runId });
+      validateControlIdentity(requestId, expectedGeneration, "cancel");
+      return requiredRun(
+        await request("cancel", { runId, requestId, expectedGeneration }),
+        "cancel",
+        false,
+      );
     },
   };
 }
@@ -690,6 +722,7 @@ function parseRun(
   const stderr = objectField(output, "stderr", operation);
   const parsed: JinushiRun = {
     runId,
+    generation: safeIntegerField(value, "generation", operation, 1),
     state: state as JinushiRun["state"],
     output: {
       stdout: {
@@ -1021,6 +1054,32 @@ function toWireRunSpec(spec: JinushiRunSpec): Record<string, unknown> {
     ...(Object.keys(limits).length === 0 ? {} : { limits }),
     correlation: { ...spec.correlation },
   };
+}
+
+function validateIdentity(
+  value: string,
+  operation: Operation,
+  name: string,
+): void {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    Buffer.byteLength(value, "utf8") > 128 ||
+    value.includes("\0") ||
+    value.includes("\r") ||
+    value.includes("\n")
+  ) {
+    throw validationError(operation, `${name} must be between 1 and 128 safe bytes`);
+  }
+}
+
+function validateControlIdentity(
+  requestId: string,
+  expectedGeneration: number,
+  operation: Operation,
+): void {
+  validateIdentity(requestId, operation, "requestId");
+  validateSafeInteger(expectedGeneration, operation, "expectedGeneration", 1);
 }
 
 function validateRunId(runId: string, operation: Operation): void {
