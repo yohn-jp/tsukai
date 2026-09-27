@@ -41,6 +41,12 @@ describe("Jinushi protocol v1 client", () => {
         case "inspect":
           sendFrame(socket, { version: 1, run: runRecord() });
           break;
+        case "writer-acquire":
+          sendFrame(socket, { version: 1, writerToken: "writer-token" });
+          break;
+        case "writer-release":
+          sendFrame(socket, { version: 1 });
+          break;
         case "input":
         case "close-input":
         case "cancel":
@@ -68,8 +74,16 @@ describe("Jinushi protocol v1 client", () => {
       runId: "run_abc",
       state: "accepted",
     });
-    await client.input("run_abc", "input-1", 1, new Uint8Array([0, 1, 2]));
-    await client.closeInput("run_abc", "close-1", 1);
+    expect(await client.acquireWriter("run_abc", "owner-1")).toBe("writer-token");
+    await client.input(
+      "run_abc",
+      "input-1",
+      1,
+      "writer-token",
+      new Uint8Array([0, 1, 2]),
+    );
+    await client.closeInput("run_abc", "close-1", 1, "writer-token");
+    await client.releaseWriter("run_abc", "owner-1", "writer-token");
     const output = await client.output("run_abc", "stdout", 1, 3);
     expect([...output.data]).toEqual([0, 1, 2]);
     expect(output).toMatchObject({ retainedFrom: 2, gap: true });
@@ -85,8 +99,10 @@ describe("Jinushi protocol v1 client", () => {
     expect(server.requests.map((request) => request.op)).toEqual([
       "capabilities",
       "run",
+      "writer-acquire",
       "input",
       "close-input",
+      "writer-release",
       "output",
       "inspect",
       "await",
@@ -102,12 +118,12 @@ describe("Jinushi protocol v1 client", () => {
         lifetime: { mode: "detached" },
       },
     });
-    expect(server.requests[2]).toMatchObject({
+    expect(server.requests[3]).toMatchObject({
       requestId: "input-1",
       expectedGeneration: 1,
       data: "AAEC",
     });
-    expect(server.requests[4]).toMatchObject({
+    expect(server.requests[6]).toMatchObject({
       op: "output",
       runId: "run_abc",
       stream: "stdout",
@@ -182,7 +198,7 @@ describe("Jinushi protocol v1 client", () => {
     [
       "input",
       async (client: ReturnType<typeof createJinushiClient>) =>
-        client.input("run_abc", "input-retry", 1, new Uint8Array([7])),
+        client.input("run_abc", "input-retry", 1, "writer-token", new Uint8Array([7])),
     ],
   ])(
     "marks a lost %s response uncertain and does not retry",
@@ -212,7 +228,7 @@ describe("Jinushi protocol v1 client", () => {
     });
 
     const error = await createJinushiClient(server.stateDir)
-      .input("run_abc", "input-test", 1, new Uint8Array([1]))
+      .input("run_abc", "input-test", 1, "writer-token", new Uint8Array([1]))
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(JinushiClientError);
@@ -276,7 +292,7 @@ describe("Jinushi protocol v1 client", () => {
       });
     });
     const error = await createJinushiClient(server.stateDir)
-      .input("run_abc", "input-test", 1, new Uint8Array([1]))
+      .input("run_abc", "input-test", 1, "writer-token", new Uint8Array([1]))
       .catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({
@@ -363,7 +379,7 @@ describe("Jinushi protocol v1 client", () => {
       throw new Error("no request is expected");
     });
     const error = await createJinushiClient(server.stateDir)
-      .input("run_abc", "oversized", 1, new Uint8Array(65_537))
+      .input("run_abc", "oversized", 1, "writer-token", new Uint8Array(65_537))
       .catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({ kind: "validation", operation: "input" });
