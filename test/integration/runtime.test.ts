@@ -3,6 +3,73 @@ import { createMockRuntime } from "../../src/testing/index.js";
 import { replayJournal } from "../../src/observation/index.js";
 
 describe("integrated mock runtime", () => {
+  it("uses settlement and proven exit for real fixture crash, error, retry, and quiet traces", async () => {
+    const runtime = createMockRuntime();
+    try {
+      const [crash, error, retry, quiet] = await Promise.all([
+        runtime.runs.create({
+          harness: "mock",
+          request: { scenario: "crash" },
+        }),
+        runtime.runs.create({
+          harness: "mock",
+          request: { scenario: "error" },
+        }),
+        runtime.runs.create({
+          harness: "mock",
+          request: { scenario: "retry" },
+        }),
+        runtime.runs.create({
+          harness: "mock",
+          request: { scenario: "quiet" },
+        }),
+      ] as const);
+      const [crashed, failed, retried] = await Promise.all([
+        runtime.runs.wait(crash.agentRunId, { timeoutMs: 5000 }),
+        runtime.runs.wait(error.agentRunId, { timeoutMs: 5000 }),
+        runtime.runs.wait(retry.agentRunId, { timeoutMs: 5000 }),
+      ] as const);
+      expect(crashed).toMatchObject({
+        outcome: "interrupted",
+        receipt: { status: "exited" },
+      });
+      expect(failed).toMatchObject({
+        outcome: "failed",
+        receipt: { status: "exited" },
+      });
+      expect(retried).toMatchObject({
+        outcome: "completed",
+        receipt: { status: "exited" },
+      });
+      const firstResult = runtime.runs.result(retry.agentRunId);
+      expect(runtime.runs.result(retry.agentRunId)).toEqual(firstResult);
+      expect(runtime.runs.get(retry.agentRunId).revision).toBe(
+        retried.revision,
+      );
+      const kinds = runtime.journal
+        .read(retry.agentRunId, 0, 100)
+        .items.map((event) => event.kind);
+      expect(kinds.indexOf("harness.agent_end")).toBeLessThan(
+        kinds.indexOf("harness.retry"),
+      );
+      expect(kinds.indexOf("harness.retry")).toBeLessThan(
+        kinds.indexOf("harness.agent_settled"),
+      );
+      await expect(
+        runtime.runs.wait(quiet.agentRunId, { timeoutMs: 30 }),
+      ).rejects.toMatchObject({ code: "WAIT_TIMEOUT" });
+      expect(runtime.runs.get(quiet.agentRunId).lifecycle).not.toBe("terminal");
+      await runtime.runs.cancel(quiet.agentRunId);
+      const stopped = await runtime.runs.wait(quiet.agentRunId, {
+        timeoutMs: 5000,
+      });
+      expect(stopped.outcome).toBe("cancelled");
+      expect(stopped.receipt?.status).toBe("exited");
+    } finally {
+      await runtime.dispose();
+    }
+  }, 15000);
+
   it("keeps result text out of replay and rejects private caller metadata", async () => {
     const runtime = createMockRuntime();
     try {
