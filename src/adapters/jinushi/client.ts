@@ -80,6 +80,8 @@ type JsonObject = Record<string, unknown>;
 type Operation =
   | "capabilities"
   | "run"
+  | "writer-acquire"
+  | "writer-release"
   | "input"
   | "close-input"
   | "output"
@@ -148,14 +150,47 @@ export function createJinushiClient(
       return { backend };
     },
 
-    async run(spec: JinushiRunSpec) {
+    async run(submissionId: string, spec: JinushiRunSpec) {
+      validateIdentity(submissionId, "run", "submissionId");
       validateRunSpec(spec);
-      const response = await request("run", { spec: toWireRunSpec(spec) });
+      const response = await request("run", {
+        submissionId,
+        spec: toWireRunSpec(spec),
+      });
       return requiredRun(response, "run", true);
     },
 
-    async input(runId: string, bytes: Uint8Array) {
+    async acquireWriter(runId: string, ownerId: string) {
+      validateRunId(runId, "writer-acquire");
+      validateIdentity(ownerId, "writer-acquire", "ownerId");
+      const response = await request("writer-acquire", {
+        runId,
+        attachId: ownerId,
+      });
+      return stringField(response, "writerToken", "writer-acquire");
+    },
+
+    async releaseWriter(runId: string, ownerId: string, writerToken: string) {
+      validateRunId(runId, "writer-release");
+      validateIdentity(ownerId, "writer-release", "ownerId");
+      validateIdentity(writerToken, "writer-release", "writerToken");
+      await request("writer-release", {
+        runId,
+        attachId: ownerId,
+        writerToken,
+      });
+    },
+
+    async input(
+      runId: string,
+      requestId: string,
+      expectedGeneration: number,
+      writerToken: string,
+      bytes: Uint8Array,
+    ) {
       validateRunId(runId, "input");
+      validateControlIdentity(requestId, expectedGeneration, "input");
+      validateIdentity(writerToken, "input", "writerToken");
       if (!(bytes instanceof Uint8Array)) {
         throw validationError("input", "bytes must be a Uint8Array");
       }
@@ -166,12 +201,38 @@ export function createJinushiClient(
         );
       }
       const data = Buffer.from(bytes).toString("base64");
-      await request("input", { runId, data });
+      return requiredRun(
+        await request("input", {
+          runId,
+          requestId,
+          expectedGeneration,
+          writerToken,
+          data,
+        }),
+        "input",
+        false,
+      );
     },
 
-    async closeInput(runId: string) {
+    async closeInput(
+      runId: string,
+      requestId: string,
+      expectedGeneration: number,
+      writerToken: string,
+    ) {
       validateRunId(runId, "close-input");
-      await request("close-input", { runId });
+      validateControlIdentity(requestId, expectedGeneration, "close-input");
+      validateIdentity(writerToken, "close-input", "writerToken");
+      return requiredRun(
+        await request("close-input", {
+          runId,
+          requestId,
+          expectedGeneration,
+          writerToken,
+        }),
+        "close-input",
+        false,
+      );
     },
 
     async output(
@@ -262,9 +323,18 @@ export function createJinushiClient(
       return result;
     },
 
-    async cancel(runId: string) {
+    async cancel(
+      runId: string,
+      requestId: string,
+      expectedGeneration: number,
+    ) {
       validateRunId(runId, "cancel");
-      await request("cancel", { runId });
+      validateControlIdentity(requestId, expectedGeneration, "cancel");
+      return requiredRun(
+        await request("cancel", { runId, requestId, expectedGeneration }),
+        "cancel",
+        false,
+      );
     },
   };
 }
@@ -690,6 +760,7 @@ function parseRun(
   const stderr = objectField(output, "stderr", operation);
   const parsed: JinushiRun = {
     runId,
+    generation: safeIntegerField(value, "generation", operation, 1),
     state: state as JinushiRun["state"],
     output: {
       stdout: {
@@ -1023,6 +1094,32 @@ function toWireRunSpec(spec: JinushiRunSpec): Record<string, unknown> {
   };
 }
 
+function validateIdentity(
+  value: string,
+  operation: Operation,
+  name: string,
+): void {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    Buffer.byteLength(value, "utf8") > 128 ||
+    value.includes("\0") ||
+    value.includes("\r") ||
+    value.includes("\n")
+  ) {
+    throw validationError(operation, `${name} must be between 1 and 128 safe bytes`);
+  }
+}
+
+function validateControlIdentity(
+  requestId: string,
+  expectedGeneration: number,
+  operation: Operation,
+): void {
+  validateIdentity(requestId, operation, "requestId");
+  validateSafeInteger(expectedGeneration, operation, "expectedGeneration", 1);
+}
+
 function validateRunId(runId: string, operation: Operation): void {
   if (typeof runId !== "string" || runId.trim().length === 0) {
     throw validationError(operation, "runId must be a non-empty string");
@@ -1192,6 +1289,8 @@ function parseJsonFrame(frame: Buffer, operation: Operation): unknown {
 function isMutation(operation: Operation): boolean {
   return (
     operation === "run" ||
+    operation === "writer-acquire" ||
+    operation === "writer-release" ||
     operation === "input" ||
     operation === "close-input" ||
     operation === "cancel"

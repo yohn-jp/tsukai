@@ -27,6 +27,7 @@ function run(
 ): JinushiRun {
   return {
     runId: "jinushi-run-1",
+    generation: 1,
     state,
     ownership: { backend: "linux-cgroup-v2", pid: 43210 },
     output: {
@@ -60,9 +61,12 @@ function event(
 
 class FakeJinushiClient implements JinushiClient {
   spec: JinushiRunSpec | undefined;
+  submissionIds: string[] = [];
   runCalls = 0;
   inputCalls: Uint8Array[] = [];
   closeInputCalls = 0;
+  writerAcquireCalls = 0;
+  writerReleaseCalls = 0;
   cancelCalls = 0;
   awaitCalls = 0;
   readonly outputCalls: Array<{ stream: "stdout" | "stderr"; offset: number }> =
@@ -82,22 +86,51 @@ class FakeJinushiClient implements JinushiClient {
     return { backend: "linux-cgroup-v2" };
   }
 
-  async run(spec: JinushiRunSpec): Promise<JinushiRun> {
+  async run(submissionId: string, spec: JinushiRunSpec): Promise<JinushiRun> {
     this.runCalls += 1;
+    this.submissionIds.push(submissionId);
     this.spec = spec;
     if (this.runFailure !== undefined) throw this.runFailure;
     this.current = run("accepted");
     return this.current;
   }
 
-  async input(_runId: string, bytes: Uint8Array): Promise<void> {
-    this.inputCalls.push(new Uint8Array(bytes));
-    if (this.inputFailure !== undefined) throw this.inputFailure;
+  async acquireWriter(_runId: string, _ownerId: string): Promise<string> {
+    this.writerAcquireCalls += 1;
+    return "writer-token";
   }
 
-  async closeInput(_runId: string): Promise<void> {
+  async releaseWriter(
+    _runId: string,
+    _ownerId: string,
+    _writerToken: string,
+  ): Promise<void> {
+    this.writerReleaseCalls += 1;
+  }
+
+  async input(
+    _runId: string,
+    _requestId: string,
+    _expectedGeneration: number,
+    _writerToken: string,
+    bytes: Uint8Array,
+  ): Promise<JinushiRun> {
+    this.inputCalls.push(new Uint8Array(bytes));
+    if (this.inputFailure !== undefined) throw this.inputFailure;
+    this.current = { ...this.current, generation: this.current.generation + 1 };
+    return this.current;
+  }
+
+  async closeInput(
+    _runId: string,
+    _requestId: string,
+    _expectedGeneration: number,
+    _writerToken: string,
+  ): Promise<JinushiRun> {
     this.closeInputCalls += 1;
     if (this.closeInputFailure !== undefined) throw this.closeInputFailure;
+    this.current = { ...this.current, generation: this.current.generation + 1 };
+    return this.current;
   }
 
   async output(
@@ -155,9 +188,15 @@ class FakeJinushiClient implements JinushiClient {
     return this.awaitedRun ?? this.current;
   }
 
-  async cancel(_runId: string): Promise<void> {
+  async cancel(
+    _runId: string,
+    _requestId: string,
+    _expectedGeneration: number,
+  ): Promise<JinushiRun> {
     this.cancelCalls += 1;
     if (this.cancelFailure !== undefined) throw this.cancelFailure;
+    this.current = { ...this.current, generation: this.current.generation + 1 };
+    return this.current;
   }
 
   async emit(page: JinushiEventPage): Promise<void> {
@@ -242,6 +281,7 @@ describe("Jinushi Pi execution adapter", () => {
     });
 
     expect(client.runCalls).toBe(1);
+    expect(client.submissionIds[0]).toMatch(/^tsukai-[0-9a-f]{64}$/);
     expect(client.spec).toEqual({
       argv: [
         "/opt/pi/bin/pi",
@@ -272,6 +312,8 @@ describe("Jinushi Pi execution adapter", () => {
 
     await execution.write(Buffer.from('{"type":"get_state"}\n'));
     expect(client.inputCalls).toHaveLength(1);
+    expect(client.writerAcquireCalls).toBe(1);
+    expect(client.writerReleaseCalls).toBe(1);
 
     client.stdout = Buffer.from('{"type":"response"}\n');
     client.stderr = Buffer.from("diagnostic-data");
@@ -334,7 +376,8 @@ describe("Jinushi Pi execution adapter", () => {
         cwd: "/work/project",
       }),
     ).rejects.toBeInstanceOf(JinushiEffectUncertainError);
-    expect(runClient.runCalls).toBe(1);
+    expect(runClient.runCalls).toBe(2);
+    expect(new Set(runClient.submissionIds).size).toBe(1);
 
     const inputClient = new FakeJinushiClient();
     inputClient.inputFailure = Object.assign(new Error("IPC EOF"), {
@@ -352,7 +395,9 @@ describe("Jinushi Pi execution adapter", () => {
     await expect(
       execution.write(Buffer.from("command\n")),
     ).rejects.toBeInstanceOf(JinushiEffectUncertainError);
-    expect(inputClient.inputCalls).toHaveLength(1);
+    expect(inputClient.inputCalls).toHaveLength(2);
+    expect(inputClient.writerAcquireCalls).toBe(1);
+    expect(inputClient.writerReleaseCalls).toBe(1);
     await inputPort.dispose().catch(() => undefined);
   });
 
@@ -497,7 +542,7 @@ describe("Jinushi Pi execution adapter", () => {
       },
     });
     await expect(execution.closeInput()).resolves.toBeUndefined();
-    expect(client.closeInputCalls).toBe(1);
+    expect(client.closeInputCalls).toBe(2);
     await port.dispose();
   });
 });

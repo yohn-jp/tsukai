@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type {
   PiDuplexExecution,
@@ -90,6 +91,27 @@ function hasAmbiguousEffect(value: unknown): boolean {
     value !== null &&
     (value as JinushiClientFailure).ambiguousEffect === true
   );
+}
+
+function stableSubmissionId(agentRunId: string): string {
+  return `tsukai-${createHash("sha256").update(agentRunId, "utf8").digest("hex")}`;
+}
+
+function controlRequestId(): string {
+  return randomUUID();
+}
+
+async function retryAmbiguous<T>(operation: string, attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (!hasAmbiguousEffect(error)) throw error;
+    try {
+      return await attempt();
+    } catch (retryError) {
+      throw mutationError(operation, retryError);
+    }
+  }
 }
 
 function mutationError(operation: string, value: unknown): Error {
@@ -369,6 +391,54 @@ class JinushiPiExecution implements PiDuplexExecution {
     await this.ready;
   }
 
+  private async retryControl(
+    operation: string,
+    requestId: string,
+    mutate: (expectedGeneration: number) => Promise<JinushiRun>,
+  ): Promise<JinushiRun> {
+    const attempt = () =>
+      retryAmbiguous(operation, () => mutate(this.currentRun.generation));
+    try {
+      return await attempt();
+    } catch (error) {
+      if (clientCode(error) !== "stale-generation") throw error;
+      const inspected = await this.client.inspect(this.executionRunId);
+      if (inspected.generation < this.currentRun.generation) {
+        throw new JinushiExecutionError(
+          "JINUSHI_STALE_OBSERVATION",
+          "Jinushi inspect returned an older Run generation",
+        );
+      }
+      this.currentRun = inspected;
+      return attempt();
+    }
+  }
+
+  private async withWriterLease<T>(
+    requestId: string,
+    mutate: (writerToken: string) => Promise<T>,
+  ): Promise<T> {
+    const writerToken = await retryAmbiguous("writer acquire", () =>
+      this.client.acquireWriter(this.executionRunId, requestId),
+    );
+    try {
+      return await mutate(writerToken);
+    } finally {
+      try {
+        await retryAmbiguous("writer release", () =>
+          this.client.releaseWriter(
+            this.executionRunId,
+            requestId,
+            writerToken,
+          ),
+        );
+      } catch {
+        // A lost release is bounded by Jinushi's writer-lease expiry. It must
+        // not rewrite the already established mutation result.
+      }
+    }
+  }
+
   write(bytes: Uint8Array): Promise<void> {
     if (this.reportedError) {
       return Promise.reject(
@@ -420,7 +490,19 @@ class JinushiPiExecution implements PiDuplexExecution {
         );
       }
       try {
-        await this.client.input(this.executionRunId, owned);
+        const requestId = controlRequestId();
+        const updated = await this.withWriterLease(requestId, (writerToken) =>
+          this.retryControl("input", requestId, (expectedGeneration) =>
+            this.client.input(
+              this.executionRunId,
+              requestId,
+              expectedGeneration,
+              writerToken,
+              owned,
+            ),
+          ),
+        );
+        this.currentRun = updated;
       } catch (error) {
         this.writeFailure = mutationError("input", error);
         throw this.writeFailure;
@@ -448,7 +530,18 @@ class JinushiPiExecution implements PiDuplexExecution {
       if (this.writeFailure !== undefined) throw this.writeFailure;
       if (this.reportedExit) return;
       try {
-        await this.client.closeInput(this.executionRunId);
+        const requestId = controlRequestId();
+        const updated = await this.withWriterLease(requestId, (writerToken) =>
+          this.retryControl("close-input", requestId, (expectedGeneration) =>
+            this.client.closeInput(
+              this.executionRunId,
+              requestId,
+              expectedGeneration,
+              writerToken,
+            ),
+          ),
+        );
+        this.currentRun = updated;
       } catch (error) {
         const mapped = mutationError("close-input", error);
         if (
@@ -522,7 +615,18 @@ class JinushiPiExecution implements PiDuplexExecution {
     }
 
     try {
-      await this.client.cancel(this.executionRunId);
+      const requestId = controlRequestId();
+      const updated = await this.retryControl(
+        "cancel",
+        requestId,
+        (expectedGeneration) =>
+          this.client.cancel(
+            this.executionRunId,
+            requestId,
+            expectedGeneration,
+          ),
+      );
+      this.currentRun = updated;
     } catch (error) {
       const mapped = mutationError("cancel", error);
       if (
@@ -702,7 +806,9 @@ class JinushiPiExecution implements PiDuplexExecution {
       );
       return;
     }
-    this.currentRun = run;
+    if (run.generation >= this.currentRun.generation) {
+      this.currentRun = run;
+    }
     if (
       run.ownership?.backend !== undefined &&
       typeof run.ownership.backend === "string" &&
@@ -1058,7 +1164,10 @@ export function createJinushiPiExecutionPort(
 
       let run: JinushiRun;
       try {
-        run = await options.client.run(spec);
+        const submissionId = stableSubmissionId(agentRunId);
+        run = await retryAmbiguous("run submission", () =>
+          options.client.run(submissionId, spec),
+        );
       } catch (error) {
         throw mutationError("run submission", error);
       }

@@ -203,7 +203,7 @@ Commit, push, and create one PR to `main` using `gh`. Do not merge, tag, release
 
 Do not start M1b until Jinushi has an accepted implementation/API sufficient to start a non-interactive Run, write stdin, consume stdout/stderr with explicit ordering/gap semantics, inspect/await physical lifecycle, and retire the owned Run. At M1b start, read the then-current Jinushi implementation and contract; do not code from the illustrative schema in old documents.
 
-The Jinushi main reviewed for M1b meets this entry condition for single-attempt execution. Its protocol does not yet provide retry-safe Run submission or input delivery. M1b must expose ambiguous transport outcomes as uncertain and must not add a Tsukai idempotency substitute. The integration remains partial until Jinushi #5 supplies a durable retry contract; Jinushi #8 remains the event-driven observation and writer-ownership dependency. The production adapter uses the current per-Run follow surface and does not add client polling.
+The original M1b implementation was integrated against Jinushi `90e52ca` while retry-safe submission/control and notifier-driven observation were still incomplete. Those dependencies are now implemented on Jinushi main: #5 provides durable submission identities plus generation-checked request identities, and #8 provides notifier-driven observation and writer ownership. The M1b closure scope is therefore to align the existing adapter to the current contract, use the Jinushi retry guarantees rather than a Tsukai-side substitute, rerun focused/full/package verification, and perform live Jinushi + Pi certification when the required local environment is available. Do not begin M2 until that closure evidence is recorded.
 
 ## Later milestone invariants
 

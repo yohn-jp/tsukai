@@ -41,10 +41,16 @@ describe("Jinushi protocol v1 client", () => {
         case "inspect":
           sendFrame(socket, { version: 1, run: runRecord() });
           break;
+        case "writer-acquire":
+          sendFrame(socket, { version: 1, writerToken: "writer-token" });
+          break;
+        case "writer-release":
+          sendFrame(socket, { version: 1 });
+          break;
         case "input":
         case "close-input":
         case "cancel":
-          sendFrame(socket, { version: 1 });
+          sendFrame(socket, { version: 1, run: runRecord("running") });
           break;
         case "output":
           sendFrame(socket, {
@@ -64,12 +70,20 @@ describe("Jinushi protocol v1 client", () => {
     const client = createJinushiClient(server.stateDir);
 
     expect(await client.capabilities()).toEqual({ backend: "linux-cgroup-v2" });
-    expect(await client.run(runSpec())).toMatchObject({
+    expect(await client.run("submission-1", runSpec())).toMatchObject({
       runId: "run_abc",
       state: "accepted",
     });
-    await client.input("run_abc", new Uint8Array([0, 1, 2]));
-    await client.closeInput("run_abc");
+    expect(await client.acquireWriter("run_abc", "owner-1")).toBe("writer-token");
+    await client.input(
+      "run_abc",
+      "input-1",
+      1,
+      "writer-token",
+      new Uint8Array([0, 1, 2]),
+    );
+    await client.closeInput("run_abc", "close-1", 1, "writer-token");
+    await client.releaseWriter("run_abc", "owner-1", "writer-token");
     const output = await client.output("run_abc", "stdout", 1, 3);
     expect([...output.data]).toEqual([0, 1, 2]);
     expect(output).toMatchObject({ retainedFrom: 2, gap: true });
@@ -80,13 +94,15 @@ describe("Jinushi protocol v1 client", () => {
       state: "terminal",
       receipt: { outcome: "exited", output: { historyComplete: true } },
     });
-    await client.cancel("run_abc");
+    await client.cancel("run_abc", "cancel-1", 1);
 
     expect(server.requests.map((request) => request.op)).toEqual([
       "capabilities",
       "run",
+      "writer-acquire",
       "input",
       "close-input",
+      "writer-release",
       "output",
       "inspect",
       "await",
@@ -95,14 +111,19 @@ describe("Jinushi protocol v1 client", () => {
     expect(server.requests[1]).toMatchObject({
       version: 1,
       op: "run",
+      submissionId: "submission-1",
       spec: {
         argv: ["pi", "--mode", "rpc", "--no-session"],
         interactive: false,
         lifetime: { mode: "detached" },
       },
     });
-    expect(server.requests[2]?.data).toBe("AAEC");
-    expect(server.requests[4]).toMatchObject({
+    expect(server.requests[3]).toMatchObject({
+      requestId: "input-1",
+      expectedGeneration: 1,
+      data: "AAEC",
+    });
+    expect(server.requests[6]).toMatchObject({
       op: "output",
       runId: "run_abc",
       stream: "stdout",
@@ -172,12 +193,12 @@ describe("Jinushi protocol v1 client", () => {
     [
       "run",
       async (client: ReturnType<typeof createJinushiClient>) =>
-        client.run(runSpec()),
+        client.run("submission-retry", runSpec()),
     ],
     [
       "input",
       async (client: ReturnType<typeof createJinushiClient>) =>
-        client.input("run_abc", new Uint8Array([7])),
+        client.input("run_abc", "input-retry", 1, "writer-token", new Uint8Array([7])),
     ],
   ])(
     "marks a lost %s response uncertain and does not retry",
@@ -207,7 +228,7 @@ describe("Jinushi protocol v1 client", () => {
     });
 
     const error = await createJinushiClient(server.stateDir)
-      .input("run_abc", new Uint8Array([1]))
+      .input("run_abc", "input-test", 1, "writer-token", new Uint8Array([1]))
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(JinushiClientError);
@@ -232,7 +253,7 @@ describe("Jinushi protocol v1 client", () => {
         });
       });
       const error = await createJinushiClient(server.stateDir)
-        .run(runSpec())
+        .run("submission-test", runSpec())
         .catch((caught: unknown) => caught);
 
       expect(error).toMatchObject({
@@ -252,7 +273,7 @@ describe("Jinushi protocol v1 client", () => {
       });
     });
     const error = await createJinushiClient(server.stateDir)
-      .run(runSpec())
+      .run("submission-test", runSpec())
       .catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({
@@ -271,7 +292,7 @@ describe("Jinushi protocol v1 client", () => {
       });
     });
     const error = await createJinushiClient(server.stateDir)
-      .input("run_abc", new Uint8Array([1]))
+      .input("run_abc", "input-test", 1, "writer-token", new Uint8Array([1]))
       .catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({
@@ -287,7 +308,7 @@ describe("Jinushi protocol v1 client", () => {
     const error = await createJinushiClient(server.stateDir, {
       requestTimeoutMs: 20,
     })
-      .run(runSpec())
+      .run("submission-test", runSpec())
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(JinushiClientError);
@@ -342,7 +363,7 @@ describe("Jinushi protocol v1 client", () => {
   it("reports EOF before the response frame as a transport failure", async () => {
     const server = await fakeSupervisor((socket) => socket.end());
     const error = await createJinushiClient(server.stateDir)
-      .run(runSpec())
+      .run("submission-test", runSpec())
       .catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({
@@ -358,7 +379,7 @@ describe("Jinushi protocol v1 client", () => {
       throw new Error("no request is expected");
     });
     const error = await createJinushiClient(server.stateDir)
-      .input("run_abc", new Uint8Array(65_537))
+      .input("run_abc", "oversized", 1, "writer-token", new Uint8Array(65_537))
       .catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({ kind: "validation", operation: "input" });
@@ -483,6 +504,7 @@ function runRecord(
 ): Record<string, unknown> {
   return {
     runId: "run_abc",
+    generation: 1,
     state,
     output: {
       stdout: {
