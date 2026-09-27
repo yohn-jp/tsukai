@@ -391,6 +391,29 @@ class JinushiPiExecution implements PiDuplexExecution {
     await this.ready;
   }
 
+  private async retryControl(
+    operation: string,
+    requestId: string,
+    mutate: (expectedGeneration: number) => Promise<JinushiRun>,
+  ): Promise<JinushiRun> {
+    const attempt = () =>
+      retryAmbiguous(operation, () => mutate(this.currentRun.generation));
+    try {
+      return await attempt();
+    } catch (error) {
+      if (clientCode(error) !== "stale-generation") throw error;
+      const inspected = await this.client.inspect(this.executionRunId);
+      if (inspected.generation < this.currentRun.generation) {
+        throw new JinushiExecutionError(
+          "JINUSHI_STALE_OBSERVATION",
+          "Jinushi inspect returned an older Run generation",
+        );
+      }
+      this.currentRun = inspected;
+      return attempt();
+    }
+  }
+
   private async withWriterLease<T>(
     requestId: string,
     mutate: (writerToken: string) => Promise<T>,
@@ -468,9 +491,8 @@ class JinushiPiExecution implements PiDuplexExecution {
       }
       try {
         const requestId = controlRequestId();
-        const expectedGeneration = this.currentRun.generation;
         const updated = await this.withWriterLease(requestId, (writerToken) =>
-          retryAmbiguous("input", () =>
+          this.retryControl("input", requestId, (expectedGeneration) =>
             this.client.input(
               this.executionRunId,
               requestId,
@@ -509,9 +531,8 @@ class JinushiPiExecution implements PiDuplexExecution {
       if (this.reportedExit) return;
       try {
         const requestId = controlRequestId();
-        const expectedGeneration = this.currentRun.generation;
         const updated = await this.withWriterLease(requestId, (writerToken) =>
-          retryAmbiguous("close-input", () =>
+          this.retryControl("close-input", requestId, (expectedGeneration) =>
             this.client.closeInput(
               this.executionRunId,
               requestId,
@@ -595,13 +616,15 @@ class JinushiPiExecution implements PiDuplexExecution {
 
     try {
       const requestId = controlRequestId();
-      const expectedGeneration = this.currentRun.generation;
-      const updated = await retryAmbiguous("cancel", () =>
-        this.client.cancel(
-          this.executionRunId,
-          requestId,
-          expectedGeneration,
-        ),
+      const updated = await this.retryControl(
+        "cancel",
+        requestId,
+        (expectedGeneration) =>
+          this.client.cancel(
+            this.executionRunId,
+            requestId,
+            expectedGeneration,
+          ),
       );
       this.currentRun = updated;
     } catch (error) {
@@ -783,7 +806,9 @@ class JinushiPiExecution implements PiDuplexExecution {
       );
       return;
     }
-    this.currentRun = run;
+    if (run.generation >= this.currentRun.generation) {
+      this.currentRun = run;
+    }
     if (
       run.ownership?.backend !== undefined &&
       typeof run.ownership.backend === "string" &&
