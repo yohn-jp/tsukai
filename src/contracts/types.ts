@@ -23,10 +23,19 @@ export type Activity =
 export type Outcome = "completed" | "failed" | "cancelled" | "interrupted";
 export type MockScenario =
   "normal" | "error" | "crash" | "retry" | "quiet" | "hold";
+export type HarnessName = "mock" | "pi";
+export interface MockRunRequest {
+  scenario: MockScenario;
+  reportedText?: string;
+  delayMs?: number;
+}
 
-export interface RunCreateInput {
-  harness: "mock";
-  request: { scenario: MockScenario; reportedText?: string; delayMs?: number };
+export interface RunCreateInput<
+  Request = MockRunRequest,
+  Harness extends HarnessName = "mock",
+> {
+  harness: Harness;
+  request: Request;
   parentRunId?: string;
   metadata?: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };
@@ -42,14 +51,17 @@ export interface PhysicalReceipt {
 
 export interface ExecutionBinding {
   executionRunId: string;
-  backend: "mock-fixture";
-  pid: number;
+  backend: string;
+  pid?: number;
+  sessionId?: string;
+  piVersion?: string;
+  piRevision?: string;
 }
 
 export interface RunSnapshot {
   agentRunId: string;
   parentRunId?: string;
-  harness: { name: "mock"; version: string };
+  harness: { name: HarnessName; version: string };
   metadata: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };
   lifecycle: Lifecycle;

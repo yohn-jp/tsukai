@@ -11,13 +11,16 @@ export interface ExecutionObserver {
   onOutput(chunk: Uint8Array): void;
   onExit(receipt: PhysicalReceipt): void;
   onError(error: Error): void;
+  onSignal?(signal: HarnessSignal): void;
+  onBindingUpdate?(binding: ExecutionBinding): void;
 }
 
-export interface ExecutionPort {
+export interface ExecutionPort<Request = RunCreateInput["request"]> {
   start(
     agentRunId: string,
-    request: RunCreateInput["request"],
+    request: Request,
     observer: ExecutionObserver,
+    workspace?: { cwd: string; workspaceSessionId?: string },
   ): Promise<ExecutionBinding>;
   input(executionRunId: string, command: { kind: "release" }): Promise<void>;
   retire(executionRunId: string, reason: "settled" | "cancel"): Promise<void>;

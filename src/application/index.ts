@@ -8,6 +8,7 @@ import {
 } from "../contracts/privacy.js";
 import type {
   Activity,
+  HarnessName,
   JsonObject,
   ObservationDraft,
   Page,
@@ -221,7 +222,10 @@ function toJsonObject(value: unknown): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
-export function createRunService(options: RunServiceOptions): RunService {
+export function createRunService<
+  Request = RunCreateInput["request"],
+  Harness extends HarnessName = "mock",
+>(options: RunServiceOptions<Request, Harness>): RunService<Request, Harness> {
   const limits = resolveLimits(options.limits);
   const runs = new Map<string, RunRecord>();
   const order: string[] = [];
@@ -434,6 +438,7 @@ export function createRunService(options: RunServiceOptions): RunService {
       processSignals(run, run.decoder.push(chunk));
     } catch {
       markUncertain(run, "harness-decoding-failed");
+      void requestRetirement(run, "cancel");
     }
   };
 
@@ -482,6 +487,19 @@ export function createRunService(options: RunServiceOptions): RunService {
 
   const observerFor = (run: RunRecord): ExecutionObserver => ({
     onOutput: (chunk) => processOutput(run, chunk),
+    onSignal: (signal) => processSignals(run, [signal]),
+    onBindingUpdate: (binding) => {
+      if (run.lifecycle === "terminal") return;
+      if (run.execution === undefined) {
+        run.pendingBindingUpdate = binding;
+        return;
+      }
+      if (binding.executionRunId !== run.execution.executionRunId) {
+        markUncertain(run, "execution-binding-mismatch");
+        return;
+      }
+      update(run, { execution: { ...binding } });
+    },
     onExit: (receipt) => processExit(run, receipt),
     onError: (_error) => {
       if (run.lifecycle === "terminal") return;
@@ -533,11 +551,16 @@ export function createRunService(options: RunServiceOptions): RunService {
     };
   };
 
-  const service: RunService = {
+  const service: RunService<Request, Harness> = {
     runs: {
       create: async (input) => {
         if (disposed) throw new Error("Run service has been disposed");
-        const validated = validateInput(input, limits);
+        const validated = options.validateInput
+          ? options.validateInput(input, limits)
+          : (validateInput(input as RunCreateInput, limits) as RunCreateInput<
+              Request,
+              Harness
+            >);
         if (runs.size >= limits.maxRuns)
           throw new RangeError("Maximum retained run count reached");
         if (validated.parentRunId !== undefined) {
@@ -551,6 +574,10 @@ export function createRunService(options: RunServiceOptions): RunService {
         const createdAt = new Date().toISOString();
         const run: RunRecord = {
           agentRunId,
+          harness: options.harnessIdentity ?? {
+            name: "mock",
+            version: "mock-fixture-v1",
+          },
           ...(validated.parentRunId === undefined
             ? {}
             : { parentRunId: validated.parentRunId }),
@@ -591,6 +618,7 @@ export function createRunService(options: RunServiceOptions): RunService {
             agentRunId,
             validated.request,
             observerFor(run),
+            validated.workspace,
           );
           const pendingReceipt = run.pendingReceipt;
           if (
@@ -602,7 +630,13 @@ export function createRunService(options: RunServiceOptions): RunService {
             markUncertain(run, "execution-receipt-mismatch");
             return toSnapshot(run);
           }
-          update(run, { execution: { ...binding } });
+          const nextBinding = run.pendingBindingUpdate ?? binding;
+          delete run.pendingBindingUpdate;
+          if (nextBinding.executionRunId !== binding.executionRunId) {
+            markUncertain(run, "execution-binding-mismatch");
+            return toSnapshot(run);
+          }
+          update(run, { execution: { ...nextBinding } });
           if (pendingReceipt !== undefined) {
             delete run.pendingReceipt;
             run.receipt = cloneReceipt(pendingReceipt);
