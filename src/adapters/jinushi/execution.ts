@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type {
   PiDuplexExecution,
@@ -90,6 +91,27 @@ function hasAmbiguousEffect(value: unknown): boolean {
     value !== null &&
     (value as JinushiClientFailure).ambiguousEffect === true
   );
+}
+
+function stableSubmissionId(agentRunId: string): string {
+  return `tsukai-${createHash("sha256").update(agentRunId, "utf8").digest("hex")}`;
+}
+
+function controlRequestId(): string {
+  return randomUUID();
+}
+
+async function retryAmbiguous<T>(operation: string, attempt: () => Promise<T>): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (!hasAmbiguousEffect(error)) throw error;
+    try {
+      return await attempt();
+    } catch (retryError) {
+      throw mutationError(operation, retryError);
+    }
+  }
 }
 
 function mutationError(operation: string, value: unknown): Error {
@@ -420,7 +442,17 @@ class JinushiPiExecution implements PiDuplexExecution {
         );
       }
       try {
-        await this.client.input(this.executionRunId, owned);
+        const requestId = controlRequestId();
+        const expectedGeneration = this.currentRun.generation;
+        const updated = await retryAmbiguous("input", () =>
+          this.client.input(
+            this.executionRunId,
+            requestId,
+            expectedGeneration,
+            owned,
+          ),
+        );
+        this.currentRun = updated;
       } catch (error) {
         this.writeFailure = mutationError("input", error);
         throw this.writeFailure;
@@ -448,7 +480,16 @@ class JinushiPiExecution implements PiDuplexExecution {
       if (this.writeFailure !== undefined) throw this.writeFailure;
       if (this.reportedExit) return;
       try {
-        await this.client.closeInput(this.executionRunId);
+        const requestId = controlRequestId();
+        const expectedGeneration = this.currentRun.generation;
+        const updated = await retryAmbiguous("close-input", () =>
+          this.client.closeInput(
+            this.executionRunId,
+            requestId,
+            expectedGeneration,
+          ),
+        );
+        this.currentRun = updated;
       } catch (error) {
         const mapped = mutationError("close-input", error);
         if (
@@ -522,7 +563,16 @@ class JinushiPiExecution implements PiDuplexExecution {
     }
 
     try {
-      await this.client.cancel(this.executionRunId);
+      const requestId = controlRequestId();
+      const expectedGeneration = this.currentRun.generation;
+      const updated = await retryAmbiguous("cancel", () =>
+        this.client.cancel(
+          this.executionRunId,
+          requestId,
+          expectedGeneration,
+        ),
+      );
+      this.currentRun = updated;
     } catch (error) {
       const mapped = mutationError("cancel", error);
       if (
@@ -1058,7 +1108,10 @@ export function createJinushiPiExecutionPort(
 
       let run: JinushiRun;
       try {
-        run = await options.client.run(spec);
+        const submissionId = stableSubmissionId(agentRunId);
+        run = await retryAmbiguous("run submission", () =>
+          options.client.run(submissionId, spec),
+        );
       } catch (error) {
         throw mutationError("run submission", error);
       }
