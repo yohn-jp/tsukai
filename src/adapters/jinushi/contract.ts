@@ -1,4 +1,4 @@
-/** Jinushi protocol v1 projection, frozen against jinushi main@630592a. */
+/** Jinushi protocol v1 projection, checked against jinushi main@90e52ca. */
 export interface JinushiRunSpec {
   argv: string[];
   cwd: string;
