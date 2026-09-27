@@ -132,9 +132,19 @@ Use local OS access control for the owner endpoint. Do not expose an unauthentic
 
 ## 9. Delivery boundaries
 
-M0 is the mock preview in `IMPLEMENTATION.md`: real lifecycle/projection/recording/replay logic over explicitly synthetic harness events and independently spawned fixed fixtures. Its storage and owner are ephemeral. It proves the local package contract, not production integration.
+M0 is complete on `main`: the mock preview provides real AgentRun lifecycle/projection/recording/replay logic over explicitly synthetic harness events and independently spawned fixed fixtures. Its storage and owner are ephemeral. M0 proves the package contract, not production integration.
 
-After M0, separately authorize the Pi/Jinushi transport integration and real cancellation/retirement certification. A subsequent durable local owner adds recovery and IPC; parent-agent tools and dashboard consume that owner. These are delivery boundaries, not permission for the initial session to continue through all stages.
+Delivery after M0 is gated as follows:
+
+- **M1a — Pi RPC protocol integration:** real Pi RPC framing, command correlation, native-event mapping, settlement semantics, and explicit live transport certification over an injected execution/transport boundary. Any direct Pi spawn is certification/testing infrastructure only.
+- **M1b — Jinushi production execution:** bind AgentRun physical ownership to the then-current accepted Jinushi API and certify cancellation/retirement without a production direct-spawn fallback.
+- **M2 — resident owner/durability:** local IPC, durable registry/journal, restart reconciliation, explicit uncertainty, and reconnectable clients.
+- **M3 — agent-facing control:** scoped parent-agent spawn/status/wait/result/cancel tools over independent AgentRuns.
+- **M4 — operator observation:** fleet/tree/timeline/resource/usage consumers and replay/profiling UI.
+- **M5 — multi-harness:** add capability-aware harness adapters without reducing Pi-native observation to a lowest-common-denominator schema.
+- **M6 — Mottainai adoption:** move AgentRun lifecycle/observation responsibility out of Mottainai while leaving decomposition, scheduling, prompt/context policy, and evaluation there.
+
+`IMPLEMENTATION.md` selects the currently authorized milestone and its acceptance criteria. Completion of one milestone is not authorization to continue automatically into the next.
 
 ## Source boundary checked for this design
 
