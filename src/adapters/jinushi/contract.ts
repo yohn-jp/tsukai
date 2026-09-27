@@ -73,16 +73,20 @@ export interface JinushiOutputPage {
 export interface JinushiClient {
   capabilities(): Promise<{ backend: string }>;
   run(submissionId: string, spec: JinushiRunSpec): Promise<JinushiRun>;
+  acquireWriter(runId: string, ownerId: string): Promise<string>;
+  releaseWriter(runId: string, ownerId: string, writerToken: string): Promise<void>;
   input(
     runId: string,
     requestId: string,
     expectedGeneration: number,
+    writerToken: string,
     bytes: Uint8Array,
   ): Promise<JinushiRun>;
   closeInput(
     runId: string,
     requestId: string,
     expectedGeneration: number,
+    writerToken: string,
   ): Promise<JinushiRun>;
   output(
     runId: string,
