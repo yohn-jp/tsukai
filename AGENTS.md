@@ -5,7 +5,7 @@ Tsukai owns Agent Run lifecycle and observation. It is not an orchestrator, LLM 
 ## Authority
 
 1. Latest explicit user instruction.
-2. Accepted Issue/Implementation scope; until an Issue exists, `docs/IMPLEMENTATION.md` defines the initial task.
+2. Accepted Issue/Implementation scope; until an Issue exists, `docs/IMPLEMENTATION.md` defines the currently authorized milestone.
 3. `docs/ARCHITECTURE.md`, canonical public types, validators, and tests.
 4. This file and applicable organization governance.
 
@@ -27,11 +27,11 @@ Do not reinterpret a settled boundary. Report concrete contradictions; do not in
 
 Use TypeScript with strict checking. Keep one npm package with internal modules; do not introduce a monorepo or package-per-layer scheme.
 
-The initial mock backend is explicit and separate from production integrations. Only its fixture execution adapter may spawn its fixed, bundled Node worker. It must not accept arbitrary executable/shell input or claim Jinushi ownership, OS sandboxing, durable execution, or live Pi certification.
+The M0 mock backend remains explicit and separate from production integrations. Its fixture execution adapter may spawn only its fixed, bundled Node worker. M1a may additionally provide an explicit certification/testing runner for the known Pi RPC executable, but production Pi execution remains Jinushi-owned and must never silently fall back to direct spawn. Neither testing path may claim Jinushi ownership, OS sandboxing, or durable execution.
 
 Keep untrusted bytes and harness-specific types at adapters. Validate framing and payloads; bound buffers, histories, and subscribers. Never persist credentials or raw environments. Content recording is explicit, not the default.
 
-Prefer existing canonical utilities when materially needed. Do not build a general CLI framework, plugin marketplace, scheduler, provider SDK, or compatibility fallback for this milestone.
+Prefer existing canonical utilities when materially needed. Do not build a general CLI framework, plugin marketplace, scheduler, provider SDK, or speculative compatibility fallback. Implement only the milestone currently selected by `docs/IMPLEMENTATION.md`.
 
 ## Git and delegation
 
@@ -45,10 +45,10 @@ Parallel workers have non-overlapping write ownership. Shared contracts, package
 
 ## Verification and publication
 
-The initial implementation must provide `pnpm run verify` and `pnpm run test:package` as specified in `docs/IMPLEMENTATION.md`. Before those scripts exist, do not claim they have run.
+`pnpm run verify` and `pnpm run test:package` are continuing regression requirements. Additional milestone-specific certification is defined in `docs/IMPLEMENTATION.md`; environment-blocked live certification is reported explicitly rather than treated as green.
 
 Use focused tests during changes, then full verification and packed-consumer tests on the final integrated HEAD. Do not repeat full verification for unchanged files or force every partial worker through an unintegrated package suite.
 
 Distinguish implemented, committed, verified, PR-created, CI-passed, merged, and published. Test mocks do not prove live integrations. Environment-blocked or missing CI is not green.
 
-Finish at the requested boundary. The initial implementation handoff ends with one PR to main. Review, merge, tag, release, and npm publish require separate authorization.
+Finish at the requested milestone boundary. Unless explicitly authorized otherwise, implementation handoff ends with one PR to main. Review, merge, tag, release, npm publish, and starting the next milestone require separate authorization.

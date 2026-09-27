@@ -46,4 +46,4 @@ Package imports have no startup side effects. The mock owner lives only for the 
 
 `pnpm run test:package` builds and packs the package, installs the tarball in a fresh temporary consumer outside this repository, and tests public imports, declarations, CLI, demo/replay, and bundled fixture execution. The tarball contains compiled assets and declarations, with no source tests or temporary state. This preview has not been published by this implementation session. Registry name availability and publishing authorization are separate checks. Do not publish, tag, or merge solely because package tests pass.
 
-The [architecture](docs/ARCHITECTURE.md), [M0 scope](docs/IMPLEMENTATION.md), and [agent instructions](AGENTS.md) define the boundaries.
+The [architecture](docs/ARCHITECTURE.md), [implementation roadmap](docs/IMPLEMENTATION.md), and [agent instructions](AGENTS.md) define the boundaries.
