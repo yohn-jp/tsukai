@@ -80,6 +80,8 @@ type JsonObject = Record<string, unknown>;
 type Operation =
   | "capabilities"
   | "run"
+  | "writer-acquire"
+  | "writer-release"
   | "input"
   | "close-input"
   | "output"
@@ -158,14 +160,37 @@ export function createJinushiClient(
       return requiredRun(response, "run", true);
     },
 
+    async acquireWriter(runId: string, ownerId: string) {
+      validateRunId(runId, "writer-acquire");
+      validateIdentity(ownerId, "writer-acquire", "ownerId");
+      const response = await request("writer-acquire", {
+        runId,
+        attachId: ownerId,
+      });
+      return stringField(response, "writerToken", "writer-acquire");
+    },
+
+    async releaseWriter(runId: string, ownerId: string, writerToken: string) {
+      validateRunId(runId, "writer-release");
+      validateIdentity(ownerId, "writer-release", "ownerId");
+      validateIdentity(writerToken, "writer-release", "writerToken");
+      await request("writer-release", {
+        runId,
+        attachId: ownerId,
+        writerToken,
+      });
+    },
+
     async input(
       runId: string,
       requestId: string,
       expectedGeneration: number,
+      writerToken: string,
       bytes: Uint8Array,
     ) {
       validateRunId(runId, "input");
       validateControlIdentity(requestId, expectedGeneration, "input");
+      validateIdentity(writerToken, "input", "writerToken");
       if (!(bytes instanceof Uint8Array)) {
         throw validationError("input", "bytes must be a Uint8Array");
       }
@@ -177,7 +202,13 @@ export function createJinushiClient(
       }
       const data = Buffer.from(bytes).toString("base64");
       return requiredRun(
-        await request("input", { runId, requestId, expectedGeneration, data }),
+        await request("input", {
+          runId,
+          requestId,
+          expectedGeneration,
+          writerToken,
+          data,
+        }),
         "input",
         false,
       );
@@ -187,11 +218,18 @@ export function createJinushiClient(
       runId: string,
       requestId: string,
       expectedGeneration: number,
+      writerToken: string,
     ) {
       validateRunId(runId, "close-input");
       validateControlIdentity(requestId, expectedGeneration, "close-input");
+      validateIdentity(writerToken, "close-input", "writerToken");
       return requiredRun(
-        await request("close-input", { runId, requestId, expectedGeneration }),
+        await request("close-input", {
+          runId,
+          requestId,
+          expectedGeneration,
+          writerToken,
+        }),
         "close-input",
         false,
       );
@@ -1251,6 +1289,8 @@ function parseJsonFrame(frame: Buffer, operation: Operation): unknown {
 function isMutation(operation: Operation): boolean {
   return (
     operation === "run" ||
+    operation === "writer-acquire" ||
+    operation === "writer-release" ||
     operation === "input" ||
     operation === "close-input" ||
     operation === "cancel"
