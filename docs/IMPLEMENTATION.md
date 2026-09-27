@@ -1,101 +1,212 @@
-# M0: publishable mock preview
+# Implementation roadmap
 
-## Goal and authority
+Status: M0 is merged on `main`. This document now selects the post-M0 delivery order and defines M1a as the next implementation authority. `docs/ARCHITECTURE.md` remains the product-semantics authority.
 
-Implement a functioning, publishable `tsukai` preview in one bounded main session. Its useful behavior is a TypeScript AgentRun service, isolated mock workers, safe event recording, and deterministic replay. It is not an empty name-reservation package and does not perform real LLM work.
+## Baseline
 
-`ARCHITECTURE.md` fixes product semantics; this document selects the initial scope. The implementation agent may choose private types, file details, and algorithms inside these boundaries. It may not add production integrations or reinterpret the contract. No separate Issue needs to be created to restate this task.
+M0 established the publishable mock preview: the TypeScript AgentRun service, explicit mock runtime, independently spawned fixed fixtures, bounded observation/journal behavior, deterministic replay, CLI demo/replay, and packed-consumer verification. Those behaviors remain regression requirements.
+
+M0 did **not** certify live Pi, Jinushi, durable ownership, parent-agent tools, or a dashboard. Do not relabel M0 evidence as proof of those capabilities.
+
+## Delivery roadmap
+
+| Milestone | Scope | Completion boundary |
+| --- | --- | --- |
+| M1a | Pi RPC protocol integration and live transport certification | Tsukai can drive and observe a separately executed Pi RPC process through an injected execution/transport boundary; direct spawn exists only as explicit certification/test infrastructure |
+| M1b | Jinushi production execution adapter | Production AgentRuns launch/retire Pi through current accepted Jinushi contracts and preserve physical/semantic evidence separation |
+| M2 | Resident local owner and durability | Cross-client local IPC, durable registry/journal, restart reconciliation, explicit uncertainty and event gaps |
+| M3 | Agent-facing control surface | Scoped `agent_spawn/status/wait/result/cancel`, parent/child runs, independent child execution |
+| M4 | Operator observability | Fleet/tree/timeline/resource/usage projections and replay/profile UI consumers |
+| M5 | Multi-harness adapters | Additional harnesses behind capability-aware adapters without degrading Pi-native observations to a lowest-common-denominator model |
+| M6 | Mottainai adoption | Mottainai consumes Tsukai as the AgentRun layer; orchestration policy remains outside Tsukai |
+
+Milestones are sequential architectural gates, not permission for one implementation session to run through the whole roadmap.
+
+# M1a: Pi RPC protocol integration
+
+## Goal
+
+Replace the synthetic-only harness boundary with a real Pi RPC adapter while preserving the M0 AgentRun semantics. M1a proves that Tsukai can speak the real Pi subprocess protocol and correlate native session/events without making Tsukai the production process supervisor.
+
+Production process ownership is still reserved for Jinushi. Because Jinushi does not yet expose an accepted executable integration surface in its current repository, M1a must not guess one. Instead, M1a introduces the production-shaped execution/byte-transport seam and an explicit test/certification runner that may spawn Pi directly.
+
+## Upstream contract
+
+The M1a implementation must re-read the then-current upstream Pi RPC documentation and package metadata before coding. The design baseline verified on 2026-09-27 is:
+
+- package: `@earendil-works/pi-coding-agent`;
+- RPC process form: `pi --mode rpc --no-session` for a fresh isolated run;
+- protocol: strict LF-delimited JSON records on stdin/stdout; stderr is diagnostics only;
+- every concurrently outstanding command uses a unique request ID and responses are correlated by ID;
+- a successful `prompt` response means accepted/queued/handled, not completed;
+- `agent_end` is not terminal because retry, compaction recovery, steering, or follow-up work may continue;
+- `agent_settled` means Pi will not continue automatically, but final success/error/abort evidence still determines semantic outcome;
+- closing stdin requests orderly Pi shutdown; process exit remains physical evidence, not semantic task success.
+
+Do not copy private Pi source or freeze undocumented internals. If the installed/upstream protocol materially contradicts this document, stop with a concrete contract blocker rather than inventing compatibility behavior.
+
+## M1a architecture
+
+~~~text
+Tsukai application/domain
+        |
+        +---- Pi harness adapter
+        |       |
+        |       +-- command correlation
+        |       +-- Pi native-event mapping
+        |       +-- session/provenance capture
+        |
+        +---- execution/transport port
+                |
+                +-- M1a certification runner (testing only)
+                |       |
+                |       +-- real pi --mode rpc process
+                |
+                +-- M1b Jinushi adapter (future production path)
+~~~
+
+The Pi harness adapter does not call `child_process.spawn` itself. It consumes a duplex execution/transport capability supplied by the execution port. Production code cannot silently select the certification runner.
+
+One Tsukai AgentRun still maps to one dedicated Pi process/execution attempt. Pi `sessionId` is recorded as harness identity/provenance and never replaces `agentRunId` or the future Jinushi execution Run ID.
 
 ## In scope
 
-- One TypeScript/ESM npm package named `tsukai`, initial version `0.1.0`, with generated public declarations and a lockfile.
-- Strict TypeScript and a supported Node.js LTS baseline, selected and recorded before workers are dispatched.
-- Public lifecycle and observation types; an injected-port run service implementing the operations in architecture section 5.
-- Explicit `tsukai/testing` entry point with `createMockRuntime`; no automatic mock fallback from a requested real harness/backend.
-- One dedicated fixed Node fixture process per mock run, behind a mock execution port. Fixtures use synthetic Pi-shaped events; they are not real Pi processes or a Jinushi backend.
-- A bounded in-memory journal, live subscription, metadata-only export, safe import/replay, and deterministic snapshot projection.
-- Thin CLI: `tsukai --help`, `--version`, `demo [--json]`, and `replay <journal-path> [--json]`. The demo hosts the ephemeral owner; separate CLI invocations do not control its past runs.
-- SDK example, public package-consumer tests, README with capabilities and limitations, and publication instructions.
-
-The root package exports the ordinary SDK/types and observation/replay surface. Testing fixtures and factory are exposed only through the explicit testing subpath. A real Pi or Jinushi request must fail as unsupported in M0. Package imports have no side effects: they do not start workers, contact the network, or write user state.
+- A real Pi RPC adapter behind the existing service/port boundaries.
+- Bounded incremental UTF-8 JSONL decoding and encoding for real Pi records.
+- Unique command IDs, bounded pending-command state, response correlation, timeout/transport-close rejection, and cleanup.
+- Pi handshake/state capture sufficient to record session identity and tested runtime provenance.
+- Initial prompt submission for one fresh AgentRun.
+- Mapping of Pi native events into the stable observation envelope while retaining supported Pi-specific fields under validated namespaced payloads.
+- Correct semantic treatment of `agent_start/end`, `turn_*`, `message_*`, `tool_execution_*`, queue, retry, compaction, usage, and `agent_settled` records that are present in the supported Pi version.
+- Result extraction from authoritative completed assistant-message evidence without enabling default transcript persistence.
+- Explicit cancellation path: semantic abort request and physical retirement remain distinct operations.
+- Explicit `tsukai/testing` or certification-only direct Pi process runner. It may execute only the configured Pi executable/argv contract; it is not a general process launcher.
+- Protocol transcript fixtures/captured-shape tests that do not require provider credentials.
+- An opt-in live Pi certification command/test that starts the real Pi RPC process. Provider-backed prompt certification may require local provider/model credentials and must report environment-blocked when they are unavailable.
+- README/package documentation describing exactly what M1a proves and what remains uncertified.
 
 ## Explicit exclusions
 
-No live Pi, Codex, Claude, Gemini, or OpenCode integration; no provider/API credentials; no real Jinushi adapter or changes to neighboring repositories; no production direct-spawn fallback; no Nawabari implementation; no resident daemon, restart recovery, IPC/HTTP server, Web UI, plugin marketplace, Pi tools, distributed execution, Mottainai migration, scheduler, or auto-retry of whole workloads.
+- No Jinushi API guessing, vendoring, direct repository edits, or fake Jinushi adapter.
+- No production direct-spawn fallback.
+- No durable owner, daemon, restart recovery, local HTTP/IPC server, or detached cross-invocation control.
+- No Pi extension/plugin or parent-agent `agent_spawn` tools yet.
+- No Mottainai migration, Nawabari implementation, scheduler, task decomposition, recursive subagents, or policy retries.
+- No Codex/Claude/Gemini/OpenCode adapters.
+- No dashboard or broad profiling UI.
+- No automatic approval of extension UI requests or interactive prompts. Unsupported required interaction is explicit.
+- No provider credentials in tests, fixtures, logs, journals, package artifacts, or repository configuration.
 
-The mock worker may simulate native retry events to test observation semantics. This does not authorize a scheduling/retry engine. UI renderers, release automation, and broad organization CI work are not prerequisites for this preview.
+## Contract decisions
 
-## Module/write boundaries
+### Transport ownership
 
-```text
-src/contracts/                 shared types and validated protocol shapes
-src/domain/                    lifecycle and immutable run projections
-src/application/               run service and operation ordering
-src/observation/               framing, native mapping, journal, import/replay
-src/adapters/mock/              fixed worker transport and mock harness adapter
-src/testing/                   explicit factory, fixture worker and scenarios
-src/cli/                       thin CLI projections
-src/index.ts                   root exports
-examples/                      public SDK examples
-test/                          corresponding unit/integration/package tests
-scripts/                       verification and tarball consumer harness
-```
+The execution/transport port owns process establishment, stdin/stdout/stderr byte transport, physical observation, and retirement. The Pi adapter is the sole RPC writer and response correlator for its run. No second consumer competes for Pi stdout.
 
-The main session owns shared contracts, root exports, package/lock/config files, CLI, and integration. Each worker owns tests beside its assigned source responsibility. Directly necessary helper/test files inside the assigned area are allowed; file lists are not artificially closed. Cross-area corrections are assigned by the main session, not edited concurrently.
+The M1a certification runner is allowed to spawn the known Pi executable only because it is test/certification infrastructure. It must be explicit at construction/use and must not satisfy or masquerade as the future production Jinushi adapter.
 
-## Fixed execution checkpoints
+### Framing and backpressure
 
-### C0 — main session: establish the common base
+Use byte-oriented LF framing. A chunk is not a record. Accept optional CR before LF. Unicode U+2028/U+2029 inside JSON strings are content, not delimiters. Enforce finite record bytes, buffered bytes, pending requests, and subscriber queues. Malformed/oversized records fail explicitly without fabricating successful observations.
 
-Fetch current `origin/main`, read these documents and AGENTS.md, and confirm no M0 implementation is already accepted or running in another PR. Create `feat/mock-preview` in an isolated worktree. Do not rewrite a newer main from a historical SHA.
+Read stdout continuously and honor stdin write backpressure. stderr is bounded diagnostic evidence and never parsed as protocol data.
 
-Select/record Node and pnpm versions; create package/build/test scaffolding and shared types/ports. Name the service factory and freeze the method signatures and mock transport contract in code before dispatch. Include a documented finite retention/record-size/subscriber limit; tests may inject smaller limits. Freeze test conventions and focused commands as well.
+### Prompt submission
 
-The port contract covers start/binding, ordered input/output, physical observation/retirement, harness observation/settlement, and journal append/read/subscribe. Production adapter APIs are not guessed. Commit this shared base. This is scaffolding evidence, not completed implementation.
+Register the AgentRun and event subscription before the first prompt. A successful Pi `prompt` response records acceptance/disposition only. Normal M1a creation expects a fresh process and a newly started prompt; unexpected queued/handled behavior must be represented explicitly rather than guessed as completion.
 
-### C1 — fixed parallel work, at most 20 subagents total/concurrent
+### Semantic settlement
 
-Use three primary implementation workers unless a smaller split is faster. Additional helpers may work only on disjoint subdivisions of these same streams; 20 is a ceiling, not a utilization goal. Every worker has a distinct branch/worktree from the committed C0 base. Do not use sibling uncommitted files as dependencies.
+`agent_end` never finalizes an AgentRun. Retry, compaction, queue, and continuation events remain observable after it.
 
-| Stream | Owns | Required proof |
+`agent_settled` closes Pi's automatic-continuation window. Tsukai then derives the semantic outcome candidate from authoritative final assistant/provider evidence: normal completion, explicit error, or abort. Missing/contradictory evidence is not converted to success.
+
+Tsukai terminal state still requires proven physical retirement according to the execution port. Semantic completion and physical process exit are separate facts.
+
+### Cancellation and retirement
+
+`runs.cancel` is idempotent. While Pi is active, request Pi abort through RPC where supported, but abort acknowledgement is not terminal evidence. Then request execution retirement through the execution port. Finalize only after physical terminal evidence is proven. A late cancel after normal semantic settlement may accelerate retirement but must not rewrite a completed semantic candidate as user-cancelled.
+
+Wait timeout or AbortSignal cancellation affects only the waiter.
+
+### Observation/privacy
+
+Default recording remains metadata-only. Do not persist prompt text, assistant text, thinking deltas, tool arguments/results, raw stderr, filesystem content, or environment values by default. The authorized caller may receive the final result separately from the journal.
+
+Preserve unavailable usage/cost as unavailable. Pi cumulative usage must not be double-counted as per-event deltas. Native Pi fields that are not common Tsukai semantics belong in bounded namespaced payloads.
+
+## Suggested module ownership
+
+Existing module boundaries remain valid. Add only the minimum adjacent structure required, for example:
+
+~~~text
+src/adapters/pi/               Pi RPC protocol/harness adapter
+src/execution/                 execution/duplex port if not already canonical
+src/testing/pi/                explicit live certification runner/helpers
+test/pi/                       protocol and adapter tests
+scripts/                       optional live certification entry point
+~~~
+
+Do not reorganize the M0 codebase merely to match these example paths. Reuse canonical contracts/helpers where they already exist.
+
+## Execution checkpoints
+
+### C0 — main session: inspect and freeze the seam
+
+Fetch latest `origin/main`, read AGENTS.md, architecture, this document, current source/tests, and the latest accepted M0 implementation. Re-read current Pi RPC docs/package metadata. Confirm no equivalent M1a PR is already active.
+
+Create an isolated implementation worktree/branch. Before dispatching workers, the main session fixes any shared contract changes required for the execution/transport seam, Pi request/provenance shapes, and focused test commands. Keep public API additions minimal and backwards compatible unless this milestone explicitly requires otherwise. Commit the shared base.
+
+### C1 — parallel implementation
+
+Use up to 20 subagents, but prefer a small number of disjoint streams. A good split is:
+
+| Stream | Ownership | Proof |
 | --- | --- | --- |
-| A | `src/domain`, `src/application`, corresponding tests | Lifecycle, lineage, operation ordering, outcome/physical separation, wait/cancel/result semantics |
-| B | `src/observation`, corresponding tests | Bounded UTF-8 JSONL, Pi-shaped settlement mapping, journal/subscriptions, privacy, validated replay |
-| C | `src/adapters/mock`, `src/testing`, corresponding tests | Distinct fixture processes, deterministic scenario control, input/output/retirement, no arbitrary executable or shell |
+| A | Pi RPC framing, command correlation, protocol validation | fragmentation, CRLF, Unicode separators, malformed/oversized frames, concurrent IDs, transport close/backpressure |
+| B | Pi event mapping and semantic settlement | `agent_end` non-terminal, retry/compaction/queue continuation, settled success/error/abort, usage/privacy |
+| C | certification execution runner and physical retirement integration | distinct real Pi process identity, clean startup/get_state/shutdown, crash/cancel/cleanup isolation |
+| D | package/docs/consumer integration if needed | public imports, optional certification command, packed package remains clean |
 
-Worker cycle: write the acceptance-focused failing test, implement, run its focused tests/type checks, commit, and return SHA plus evidence. Workers do not make independent PRs, change shared contracts/package metadata, merge main, or review/approve the final PR. Unimplemented sibling modules are not a reason for every worker to invent a duplicate dependency.
+Shared contracts, package metadata/lockfile, root exports, and final integration remain owned by the main session. Workers use distinct worktrees/branches from the committed C0 base, run focused verification, commit, and return SHA/evidence. They do not open independent PRs or merge.
 
-### C2 — main session: integrate and certify
+### C2 — integration and verification
 
-Integrate the three committed streams into the integration worktree; local merges/cherry-picks of owned worker branches are authorized. Resolve necessary integration corrections without changing architecture. Finish public exports/factories, CLI, SDK example, and packed-consumer harness.
+Integrate worker commits, resolve only required seams, and run focused tests followed by `pnpm run verify` and `pnpm run test:package` on the final HEAD.
 
-Implement `pnpm run verify` for format/static checks, type checking, build, and all local behavior tests. Implement `pnpm run test:package` to pack the package, install the produced tarball into a clean temporary consumer outside the repository, and execute the public SDK, CLI and declaration tests. It must not resolve unpublished source paths or import private internals. Keep builds and packaging finite and clean temporary workers/files in success and failure paths.
+Add a deterministic credential-free Pi protocol/transport certification that can run whenever the Pi executable/package is installed. Keep provider-backed certification opt-in. If provider credentials/model access are absent, report that lane as ENVIRONMENT_BLOCKED rather than green or failed product logic.
 
-Run focused tests, then final integrated verify and package-consumer tests. Repeat only checks affected by subsequent fixes. Update README with actual support, install/use commands, and limitations. A clean environment must not require Pi, Jinushi, API keys, global tools from a developer profile, or access to another repository.
+Verify that M0 mock behavior and package-consumer tests remain green. Ensure the packed package does not contain credentials, captured private transcripts, temporary session state, or developer-local Pi configuration.
 
-### C3 — publication handoff and stop
+### C3 — handoff
 
-Commit and push `feat/mock-preview`; create exactly one PR to `main` through `gh`. Use any applicable current repository/org PR template; do not invent linked/closed Issues. State verification and actual CI state accurately. If blocked, publish available coherent work as a clearly marked draft with the concrete blocker rather than discarding it or claiming completion.
+Commit, push, and create one PR to `main` using `gh`. Do not merge, tag, release, publish npm, begin M1b, or modify Jinushi/Nawabari/Mottainai. Report PR URL, base/head SHA, verification, live-certification status, tested Pi version/provenance, and remaining limitations.
 
-Do not merge the PR, create a release/tag, publish npm, close Issues, or start the next milestone. Those actions are separate from implementing a publishable package. Report the exact final SHA, tests, tarball contents, package-name check, PR, and remaining limitations.
+## M1a acceptance criteria
 
-## Acceptance criteria
+1. Existing M0 tests, `pnpm run verify`, and `pnpm run test:package` remain green on the integrated HEAD.
+2. Pi RPC support is a real adapter over an injected duplex execution/transport boundary; the production adapter itself does not spawn a process.
+3. The explicit certification runner can start the supported real Pi executable in RPC mode, issue at least a correlated `get_state`, record a real Pi `sessionId`, close/retire it, and prove the process ended. This lane requires no model call.
+4. Command IDs support multiple in-flight requests; unknown/duplicate responses, timeout, malformed input, EOF, and process exit reject/clean pending operations deterministically.
+5. JSONL framing satisfies the byte/Unicode/bounds rules and never treats stderr as protocol.
+6. Prompt acceptance is not completion. `agent_end` is non-terminal. Retry/compaction/queue continuation before `agent_settled` is preserved.
+7. Complete transcript fixtures prove normal success, explicit provider/harness error, abort, and contradictory/missing terminal evidence without fabricating success.
+8. Terminal Tsukai completion occurs only after semantic outcome candidate plus proven execution retirement; crash-before-settlement is interrupted/failed according to established architecture rather than completed.
+9. Repeated/concurrent cancel is idempotent; waiter cancellation does not cancel the AgentRun; late cancel cannot rewrite an already selected normal semantic outcome.
+10. Default journal/export remains metadata-only and replay-safe. Pi-specific observations are bounded/validated and cannot inject arbitrary persisted secrets.
+11. Usage/cost mapping distinguishes cumulative values and unknown values so metrics are not double-counted or converted from unavailable to zero.
+12. The packed public package exposes only intentional Pi integration surface; certification/testing helpers are explicitly separated and no source/private imports are required by consumers.
+13. README states M1a's exact support: Pi RPC protocol integration is implemented; production physical execution is not Jinushi-backed until M1b; resident/durable control is not yet implemented.
+14. If a configured provider/model is available, an opt-in end-to-end live prompt certification may prove real message/tool/settlement events. If unavailable, the final report names that certification ENVIRONMENT_BLOCKED and relies only on the deterministic protocol/transport evidence above.
 
-1. Importing the packed root/testing entries and type declarations works from a clean consumer. The CLI help/version reports the built package version. No unpublished files or development dependencies are needed at runtime.
-2. The public SDK creates multiple mock runs, including a parent/child relationship, retrieves/list/children snapshots, streams events, waits, cancels, and retrieves terminal results. Snapshots cannot mutate service state. A missing ID returns a typed not-found error.
-3. At least three overlapping fixtures have distinct actual PIDs/execution IDs. Ending/cancelling one does not terminate the others or the owner. The fixture adapter only starts its bundled worker through the current Node executable. `dispose` performs bounded cleanup of its fixtures; M0 does not claim detached survival.
-4. A deterministic normal trace returns a final reported result only after semantic settlement and proven fixture retirement. A crash without settlement is interrupted, never completed. Explicit harness error is failed. A cancellation request is not terminal until the worker has actually ended.
-5. `agent_end` followed by native retry/compaction/continuation is not terminal. The synthetic `agent_settled` plus final success/error/abort evidence controls the semantic candidate. Prompt acceptance and quiet output never manufacture completion.
-6. Concurrent/repeated cancel is idempotent. Wait timeout/aborted waiting leaves the worker running. Later completion-vs-cancel ordering follows the architecture; final result and outcome cannot be overwritten by late/duplicate events. Parent/child completion and cancellation do not cascade implicitly.
-7. Framing handles fragmented UTF-8, multiple records per chunk, CRLF, and Unicode separators inside strings. Malformed/oversized records and truncated final frames have explicit error/gap behavior. Use LF framing rather than a generic Unicode line splitter.
-8. Journal order/cursors and live subscriptions are bounded. Known duplicate source identity does not double-count metrics. Retention expiry/slow consumers report gaps or explicit stream errors. Unknown metrics stay unavailable. Version, schema, sequence, and run consistency are validated on imported journals.
-9. The recorded metadata stream replays to the same final public projection as the live reducer for the retained complete history. Replay of incomplete history preserves an explicit incomplete state; it never executes commands or creates processes. Default export excludes synthetic prompt/text/thinking/tool-content secrets used by privacy tests.
-10. `tsukai demo` shows multiple runs, their relationship, events, terminal results, and explicit mock/ephemeral provenance. For `demo --json`, stdout is the metadata journal as one observation envelope per LF-delimited line; diagnostics go to stderr. `tsukai demo --json > demo.jsonl` followed by `tsukai replay demo.jsonl --json` must work through the installed CLI. Replay reports metadata projections, not discarded result text, and never starts a worker.
-11. `pnpm run verify` and `pnpm run test:package` pass on the final integrated HEAD. Tests use deterministic fixture gates/short bounded timeouts rather than long sleeps or live providers. Physical fixture tests and synthetic protocol tests are reported separately from unperformed live Pi/Jinushi certification.
-12. README and package metadata clearly describe mock-preview status. Packaging includes compiled worker assets and declarations, excludes secrets/transcripts/temp state, and contains no placeholder-only public API. The final PR is unmerged and npm remains unpublished by this implementation session.
+## M1b entry condition
 
-## npm readiness
+Do not start M1b until Jinushi has an accepted implementation/API sufficient to start a non-interactive Run, write stdin, consume stdout/stderr with explicit ordering/gap semantics, inspect/await physical lifecycle, and retire the owned Run. At M1b start, read the then-current Jinushi implementation and contract; do not code from the illustrative schema in old documents.
 
-The intended public unscoped name is `tsukai`. Check `npm view tsukai name version --json` and registry authentication/access when preparing publication. A real registry not-found response means no visible package at that instant; network/auth failure does not establish availability, and an availability check does not reserve a name. If another publisher owns the name, report that fact without renaming this product or overwriting anything.
+## Later milestone invariants
 
-Prepare a tarball and verify it; never publish as a test. Do not invent credentials or an author/license declaration absent authority. The public package needs genuine functionality rather than an empty reservation: npm's [package-name policy](https://docs.npmjs.com/policies/disputes/) disallows packages with no genuine function used only to reserve a name. Recording/replay and the executable mock SDK are the initial functionality. Actual name acquisition occurs only through a separately authorized successful npm publication.
+- M2 may add durability/IPC but cannot move process ownership from Jinushi into Tsukai.
+- M3 may expose parent-agent tools but lineage alone never grants authorization.
+- M4 is a projection/consumer layer and cannot become a second lifecycle authority.
+- M5 adapters advertise capabilities; Pi-native evidence is not discarded merely because another harness lacks an equivalent event.
+- M6 removes duplicate AgentRun responsibility from Mottainai rather than copying orchestration policy into Tsukai.
