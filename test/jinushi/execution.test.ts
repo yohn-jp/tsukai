@@ -65,6 +65,8 @@ class FakeJinushiClient implements JinushiClient {
   runCalls = 0;
   inputCalls: Uint8Array[] = [];
   closeInputCalls = 0;
+  writerAcquireCalls = 0;
+  writerReleaseCalls = 0;
   cancelCalls = 0;
   awaitCalls = 0;
   readonly outputCalls: Array<{ stream: "stdout" | "stderr"; offset: number }> =
@@ -93,10 +95,24 @@ class FakeJinushiClient implements JinushiClient {
     return this.current;
   }
 
+  async acquireWriter(_runId: string, _ownerId: string): Promise<string> {
+    this.writerAcquireCalls += 1;
+    return "writer-token";
+  }
+
+  async releaseWriter(
+    _runId: string,
+    _ownerId: string,
+    _writerToken: string,
+  ): Promise<void> {
+    this.writerReleaseCalls += 1;
+  }
+
   async input(
     _runId: string,
     _requestId: string,
     _expectedGeneration: number,
+    _writerToken: string,
     bytes: Uint8Array,
   ): Promise<JinushiRun> {
     this.inputCalls.push(new Uint8Array(bytes));
@@ -109,6 +125,7 @@ class FakeJinushiClient implements JinushiClient {
     _runId: string,
     _requestId: string,
     _expectedGeneration: number,
+    _writerToken: string,
   ): Promise<JinushiRun> {
     this.closeInputCalls += 1;
     if (this.closeInputFailure !== undefined) throw this.closeInputFailure;
@@ -295,6 +312,8 @@ describe("Jinushi Pi execution adapter", () => {
 
     await execution.write(Buffer.from('{"type":"get_state"}\n'));
     expect(client.inputCalls).toHaveLength(1);
+    expect(client.writerAcquireCalls).toBe(1);
+    expect(client.writerReleaseCalls).toBe(1);
 
     client.stdout = Buffer.from('{"type":"response"}\n');
     client.stderr = Buffer.from("diagnostic-data");
@@ -377,6 +396,8 @@ describe("Jinushi Pi execution adapter", () => {
       execution.write(Buffer.from("command\n")),
     ).rejects.toBeInstanceOf(JinushiEffectUncertainError);
     expect(inputClient.inputCalls).toHaveLength(2);
+    expect(inputClient.writerAcquireCalls).toBe(1);
+    expect(inputClient.writerReleaseCalls).toBe(1);
     await inputPort.dispose().catch(() => undefined);
   });
 
