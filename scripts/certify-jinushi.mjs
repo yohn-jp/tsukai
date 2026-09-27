@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative } from "node:path";
 import {
@@ -51,7 +52,11 @@ function verifyPiSource() {
     encoding: "utf8",
     timeout: 10_000,
   }).trim();
-  assert.equal(version, SUPPORTED_PI_VERSION, "Installed Pi version is unsupported");
+  assert.equal(
+    version,
+    SUPPORTED_PI_VERSION,
+    "Installed Pi version is unsupported",
+  );
   return actualExecutable;
 }
 
@@ -87,7 +92,7 @@ async function certifyJinushi() {
 
   try {
     const transport = await port.open(
-      `m1b-certification-${process.pid}`,
+      `m1b-certification-${randomUUID()}`,
       {
         onStdout(chunk) {
           rpc?.push(chunk);
