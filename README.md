@@ -44,7 +44,13 @@ M1a certifies `@earendil-works/pi-coding-agent` source revision `2b0a123de98318c
 
 Set `TSUKAI_PI_LIVE_PROVIDER` and `TSUKAI_PI_LIVE_MODEL` as well to opt into provider-backed prompt certification; it uses the caller's existing Pi auth configuration without copying it into the repository or package. The credential-free and provider-backed lanes report separately.
 
-The production Pi adapter does not spawn a process. Production physical execution remains reserved for Jinushi in M1b; there is no direct-spawn fallback. M1a also has no resident owner, restart recovery, durable control, Pi extension tools, or workspace authority.
+The Pi adapter does not spawn a process. M1a's direct Pi runner remains testing infrastructure. There is no production direct-spawn fallback.
+
+## Jinushi execution integration (M1b partial)
+
+`createJinushiClient(stateDir)` connects to Jinushi's local protocol v1 IPC. `createJinushiPiExecutionPort({ client, executable, environment })` supplies the production `PiDuplexExecutionPort` to `createPiRuntime`. Pass an admitted absolute `workspace.cwd` when creating each AgentRun. The port submits one noninteractive Jinushi Run for one Pi RPC process, sends RPC bytes through Jinushi input, reads ordered stdout by offset, keeps stderr as bounded diagnostics, and reports Jinushi terminal receipts as physical evidence. Tsukai continues to own AgentRun and Pi semantics; `executionRunId` is the Jinushi Run ID, separate from the Pi `sessionId`.
+
+This integration is single attempt for `run` and `input`. If a response is lost, the operation may have happened. Tsukai reports uncertainty and does not retry or infer nonexecution. Jinushi [#5](https://github.com/yohn-jp/jinushi/issues/5) must add durable submission and control identities before ambiguous retries can be safe. The adapter consumes Jinushi's current per-Run event follow; Jinushi [#8](https://github.com/yohn-jp/jinushi/issues/8) tracks event-driven multiplexing and input-writer ownership. The current Tsukai runtime is still ephemeral and has no resident owner or restart recovery. See [the frozen M1b contract](docs/M1B-JINUSHI.md).
 
 ## Recording and replay
 

@@ -11,12 +11,14 @@ class FakePiPort implements PiDuplexExecutionPort {
   observer?: PiTransportObserver;
   writes: string[] = [];
   retired = false;
+  retireCalls = 0;
   constructor(
     private readonly settle: boolean,
     private readonly autoExit = true,
     private readonly disposition:
       "started" | "queued" | "handled" | null = "started",
     private readonly eventsBeforePromptResponse = false,
+    private readonly closeInputFails = false,
   ) {}
 
   emitExit(exitCode = 0) {
@@ -89,9 +91,13 @@ class FakePiPort implements PiDuplexExecutionPort {
         }
       },
       closeInput: async () => {
+        if (this.closeInputFails) throw new Error("close-input response lost");
         if (this.autoExit) this.emitExit();
       },
-      retire: async () => undefined,
+      retire: async () => {
+        this.retireCalls++;
+        if (this.closeInputFails && this.autoExit) this.emitExit();
+      },
     };
   }
   async dispose() {
@@ -163,6 +169,26 @@ describe("injected Pi runtime", () => {
       expect(execution.writes.filter((type) => type === "abort")).toHaveLength(
         1,
       );
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("still requests physical retirement after an uncertain close-input", async () => {
+    const execution = new FakePiPort(false, true, "started", false, true);
+    const runtime = createPiRuntime({
+      execution,
+      piVersion: SUPPORTED_PI_VERSION,
+      piRevision: SUPPORTED_PI_REVISION,
+    });
+    try {
+      const created = await runtime.runs.create({
+        harness: "pi",
+        request: { prompt: "work" },
+      });
+      await runtime.runs.cancel(created.agentRunId);
+      expect(execution.retireCalls).toBe(1);
+      expect(execution.retired).toBe(true);
     } finally {
       await runtime.dispose();
     }

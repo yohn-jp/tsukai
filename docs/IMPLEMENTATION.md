@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-Status: M0 is merged on `main`. This document now selects the post-M0 delivery order and defines M1a as the next implementation authority. `docs/ARCHITECTURE.md` remains the product-semantics authority.
+Status: M0 and M1a are merged on `main`. The current implementation scope is M1b, bounded by the current Jinushi protocol and the contract freeze in [M1B-JINUSHI.md](M1B-JINUSHI.md). `docs/ARCHITECTURE.md` remains the product-semantics authority.
 
 ## Baseline
 
@@ -202,6 +202,8 @@ Commit, push, and create one PR to `main` using `gh`. Do not merge, tag, release
 ## M1b entry condition
 
 Do not start M1b until Jinushi has an accepted implementation/API sufficient to start a non-interactive Run, write stdin, consume stdout/stderr with explicit ordering/gap semantics, inspect/await physical lifecycle, and retire the owned Run. At M1b start, read the then-current Jinushi implementation and contract; do not code from the illustrative schema in old documents.
+
+The Jinushi main reviewed for M1b meets this entry condition for single-attempt execution. Its protocol does not yet provide retry-safe Run submission or input delivery. M1b must expose ambiguous transport outcomes as uncertain and must not add a Tsukai idempotency substitute. The integration remains partial until Jinushi #5 supplies a durable retry contract; Jinushi #8 remains the event-driven observation and writer-ownership dependency. The production adapter uses the current per-Run follow surface and does not add client polling.
 
 ## Later milestone invariants
 

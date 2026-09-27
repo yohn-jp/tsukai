@@ -369,8 +369,18 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
             /* Abort acknowledgement is not physical or semantic proof. */
           }
         }
-        await state.transport.closeInput();
+        let closeFailed = false;
+        let closeError: unknown;
+        try {
+          await state.transport.closeInput();
+        } catch (error) {
+          closeFailed = true;
+          closeError = error;
+        }
+        // A lost close-input acknowledgement cannot prevent a physical
+        // retirement request. The close outcome remains uncertain to callers.
         await state.transport.retire(reason);
+        if (closeFailed) throw closeError;
       })();
       return state.retirement;
     },
