@@ -1,0 +1,16 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    uses: yohn-jp/.github/.github/workflows/npm-publish.yml@main
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
