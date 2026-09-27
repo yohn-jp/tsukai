@@ -36,7 +36,8 @@
     "format": "prettier --write .",
     "verify": "pnpm run format:check && pnpm run build && pnpm run typecheck && pnpm run test",
     "test:package": "node scripts/test-package.mjs",
-    "certify:pi": "pnpm run build && node scripts/certify-pi.mjs"
+    "certify:pi": "pnpm run build && node scripts/certify-pi.mjs",
+    "certify:jinushi": "pnpm run build && node scripts/certify-jinushi.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
