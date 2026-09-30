@@ -172,6 +172,20 @@ async function main() {
     assert.equal(after.execution.sessionId, seen.execution.sessionId);
     assert.equal(after.spawnedBy, parent.run.agentRunId);
     assert.ok(after.recovery.epoch >= 1);
+    // M2 reconciliation re-attaches by Jinushi Run ID and cursor. Only an
+    // attached run has the authoritative Jinushi evidence that can later drive
+    // it to terminal; without it the run correctly stays `uncertain`.
+    let observed;
+    const reattached = await until(async () => {
+      observed = await op.runs.get(childId);
+      return observed.recovery?.state === "attached" && observed;
+    }, "child re-attach after owner restart").catch((error) => {
+      error.message += ` (last: ${observed?.lifecycle}/${JSON.stringify(observed?.recovery)})`;
+      throw error;
+    });
+    // Nonterminal: the durable semantic decision (if any) waits on retirement.
+    assert.ok(["running", "stopping"].includes(reattached.lifecycle));
+    assert.equal(runsFor(childId).length, 1);
     await assert.rejects(
       () => stranger.agent.agent_status(childId),
       (e) => e.code === "FORBIDDEN",
@@ -196,9 +210,27 @@ async function main() {
     writeFileSync(gate, "");
     const cancelled = await cancelling;
     assert.equal(cancelled.agentRunId, childId);
+    // `runs.wait` completes on terminal OR explicit uncertainty (M2), so waiter
+    // completion alone is not terminal evidence. Terminal is certified only
+    // together with the Jinushi receipt and Jinushi's own terminal state.
     const done = await op.runs.wait(childId, { timeoutMs: 90_000 });
-    assert.equal(done.lifecycle, "terminal");
+    assert.ok(
+      done.lifecycle === "terminal" || done.lifecycle === "uncertain",
+      `wait completed on non-final lifecycle ${done.lifecycle}`,
+    );
+    assert.equal(
+      done.lifecycle,
+      "terminal",
+      `child stayed uncertain (${done.recovery?.reason}) after re-attached cancellation`,
+    );
+    // The recorded semantic decision wins: a credential-free Pi may settle
+    // `failed` before the cancellation lands, otherwise it is `cancelled`.
+    assert.ok(["cancelled", "failed"].includes(done.outcome));
+    assert.equal(done.recovery.state, "terminal");
     assert.equal(done.receipt.status, "exited");
+    assert.equal(done.receipt.executionRunId, seen.execution.executionRunId);
+    const [physical] = runsFor(childId);
+    assert.equal(physical.state, "terminal");
     assert.equal(runsFor(childId).length, 1);
     assert.equal(jinushiRuns().length, totalBefore);
     // No re-execution: result retrieval reads recorded state only.

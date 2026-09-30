@@ -1,6 +1,8 @@
 # Tsukai
 
-Tsukai is an AgentRun lifecycle and observation SDK. M1a adds Pi 0.99.1 RPC protocol integration over an injected execution/byte-transport port. The existing mock preview still exercises lifecycle, recording, and replay over dedicated synthetic Node fixture processes.
+Tsukai is an AgentRun lifecycle and observation SDK. It owns AgentRun identity, lineage, semantic lifecycle, result, durable run state, and observation. Physical execution is owned by [Jinushi](https://github.com/yohn-jp/jinushi), workspace authority by Nawabari, and orchestration policy by Mottainai.
+
+Current `main` implements milestones M0 through M5.5: the mock preview, Pi 0.99.1 RPC integration (M1a), Jinushi-owned production execution (M1b), the resident owner with durability and restart reconciliation (M2), scoped agent-facing control (M3), operator observation projections (M4), capability-aware multi-harness adapters with Pi and Claude Code (M5), and admitted immutable execution profiles (M5.5). M6 (Mottainai adoption) has not started. Status and the remaining sequence are in [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md).
 
 ## Install and use
 
@@ -16,7 +18,7 @@ pnpm exec tsukai demo --json > demo.jsonl
 pnpm exec tsukai replay demo.jsonl --json
 ```
 
-After package publication, consumers can install `tsukai` with their package manager. Until then, `pnpm pack` produces the installable tarball. The package exports the SDK, Pi adapter, and observation/replay utilities at `tsukai`. Explicit mock fixtures and the direct Pi certification runner are at `tsukai/testing`.
+Version 0.2.0 ([release notes](docs/releases/0.2.0.md)) is the first version that carries the resident owner and the M2–M5.5 surface. `tsukai@0.1.0` predates them. `pnpm pack` produces an installable tarball of any revision. The package exports the SDK, Pi adapter, and observation/replay utilities at `tsukai`. Explicit mock fixtures and the direct Pi certification runner are at `tsukai/testing`.
 
 ```ts
 import { createMockRuntime } from "tsukai/testing";
@@ -64,7 +66,7 @@ Intent is persisted before any external start and the Jinushi execution binding 
 
 `pnpm run certify:owner` is the live restart certification (real Jinushi supervisor, real Pi 0.99.1, owner killed with SIGKILL and restarted); it reports ENVIRONMENT_BLOCKED when `TSUKAI_JINUSHI_STATE_DIR`, `TSUKAI_JINUSHI_WORKSPACE`, or `TSUKAI_JINUSHI_BIN` are unset.
 
-`agent_spawn/status/wait/result/cancel` (M3, see `docs/M3-AGENT.md`) are scoped projections over the same resident owner via `connectAgent`; `pnpm run certify:agent` is their live lane and reports ENVIRONMENT_BLOCKED under the same conditions.
+`agent_spawn/status/wait/result/cancel` (M3, see `docs/M3-AGENT.md`) are scoped projections over the same resident owner via `connectAgent`; `pnpm run certify:agent` is their live lane (including a SIGKILL owner restart, re-attachment, and cancellation of the child) and reports ENVIRONMENT_BLOCKED under the same conditions.
 
 ## Capability-aware harnesses (M5)
 
@@ -84,8 +86,8 @@ Package imports have no startup side effects. The mock owner lives only for the 
 
 ## Publication preparation
 
-`pnpm run test:package` builds and packs the package, installs the tarball in a fresh temporary consumer outside this repository, and tests public imports, declarations, CLI, demo/replay, and bundled fixture execution. The tarball contains compiled assets and declarations, with no source tests or temporary state. This preview has not been published by this implementation session. Registry name availability and publishing authorization are separate checks. Do not publish, tag, or merge solely because package tests pass.
+`pnpm run test:package` builds and packs the package, installs the tarball in a fresh temporary consumer outside this repository, and tests public imports, declarations, CLI, demo/replay, and bundled fixture execution. The tarball contains compiled assets and declarations, with no source tests or temporary state. Publication happens only through the release workflow: publishing a GitHub Release tagged `v<package version>` runs `.github/workflows/publish.yml` (the shared yohn-jp npm publish workflow with Trusted Publishing). Release notes live under [docs/releases](docs/releases). Do not publish, tag, or merge solely because package tests pass.
 
-Pull requests and pushes to `main` run the shared yohn-jp TypeScript CLI CI through `.github/workflows/ci.yml`: format, lint, typecheck, tests, build, packed-package validation, and `pnpm run conformance` (the packed-consumer test plus credential-free Pi 0.99.1 certification). The workflow reports a single `verify` status.
+Pull requests and pushes to `main` run the shared yohn-jp TypeScript CLI CI through `.github/workflows/ci.yml`: format, lint, typecheck, tests, build, packed-package validation, and `pnpm run conformance` (the packed-consumer test plus credential-free Pi 0.99.1 certification). The workflow reports a single `verify` status. Its governance job validates the synchronized organization metadata under `.github/` (Issue Forms, PR templates, and the Inari snapshot with its provenance manifest).
 
 The [architecture](docs/ARCHITECTURE.md), [implementation roadmap](docs/IMPLEMENTATION.md), and [agent instructions](AGENTS.md) define the boundaries.

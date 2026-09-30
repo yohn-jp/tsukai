@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -69,7 +69,7 @@ try {
   ]);
 
   const script = `import assert from 'node:assert/strict';
-import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createRunService, createMockHarness, startResidentOwner, connectOwner, createFileDurableStore, collectLiveProjection, projectReplay, renderOperatorProjection, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION, createHarnessRuntime, createPiHarnessAdapter, createClaudeCodeHarnessAdapter, createJinushiClaudeCodeExecutionPort, HarnessCapabilityError, PI_CAPABILITIES, CLAUDE_CODE_CAPABILITIES, SUPPORTED_CLAUDE_CODE_VERSION, ExecutionProfileError, EXECUTION_PROFILE_SCHEMA_VERSION, executionProfileFingerprint, PI_EXECUTION_PROFILE_CAPABILITIES, CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES } from 'tsukai';
+import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createRunService, createMockHarness, startResidentOwner, connectOwner, connectAgent, createFileDurableStore, collectLiveProjection, projectReplay, renderOperatorProjection, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION, createHarnessRuntime, createPiHarnessAdapter, createClaudeCodeHarnessAdapter, createJinushiClaudeCodeExecutionPort, HarnessCapabilityError, PI_CAPABILITIES, CLAUDE_CODE_CAPABILITIES, SUPPORTED_CLAUDE_CODE_VERSION, ExecutionProfileError, EXECUTION_PROFILE_SCHEMA_VERSION, executionProfileFingerprint, PI_EXECUTION_PROFILE_CAPABILITIES, CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES } from 'tsukai';
 import { createMockRuntime, createMockExecutionPort, createPiCertificationExecutionPort } from 'tsukai/testing';
 import { mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -140,6 +140,8 @@ assert.equal(typeof createJinushiClaudeCodeExecutionPort, 'function');
       return operator.runs.capabilities(probe.agentRunId);
     })();
     assert.equal(capabilities.executionProfile.extensions.tsukai, 'configurable');
+    assert.equal(capabilities.harness.name, 'pi');
+    assert.equal(capabilities.steer.tsukai, 'unsupported');
     const profile = {
       schemaVersion: 1,
       provider: 'acme',
@@ -153,6 +155,7 @@ assert.equal(typeof createJinushiClaudeCodeExecutionPort, 'function');
     assert.equal(inspected.executionProfile.fingerprint, executionProfileFingerprint(inspected.executionProfile));
     assert.deepEqual(specs.at(-1).argv.slice(-8), ['--provider', 'acme', '--model', 'coder-1', '--tools', 'governed_execution,read', '--extension', extension]);
     assert.equal(specs.at(-1).cwd, dir);
+    await assert.rejects(operator.runs.steer(created.agentRunId, 'x'), (error) => error.code === 'HARNESS_CAPABILITY_UNSUPPORTED');
     await assert.rejects(
       operator.runs.create({ harness: 'pi', request: { prompt: 'p' }, executionProfile: { schemaVersion: 1, argv: ['--mode', 'json'] } }),
       (error) => error.code === 'EXECUTION_PROFILE_INVALID',
@@ -185,12 +188,61 @@ try {
   // Operator projection layer over the resident owner's read-only APIs only.
   const live = await collectLiveProjection(client.runs);
   assert.equal(live.fleet.length, 1);
+  assert.equal(typeof live.metrics, 'object');
+  assert.ok(Array.isArray(live.tree));
   assert.equal(live.fleet[0].agentRunId, created.agentRunId);
   assert.equal(live.fleet[0].lineage, 'root');
   assert.ok(live.completeness.status === 'complete' || live.completeness.status === 'incomplete');
   assert.ok(Array.isArray(live.timeline));
   const rendered = renderOperatorProjection(live, 'text');
   assert.match(rendered, /^completeness=/);
+  // Full AgentRun operation set through the packed resident-owner client.
+  const listed = await client.runs.list({ limit: 10 });
+  assert.ok(listed.items.some((run) => run.agentRunId === created.agentRunId));
+  const settledResult = await client.runs.result(created.agentRunId);
+  assert.equal(settledResult.ready, true);
+  assert.equal(settledResult.outcome, 'completed');
+  const page = await client.runs.eventsPage(created.agentRunId, 0, 100);
+  assert.ok(page.items.length > 0);
+  assert.ok(page.items.every((event) => event.runId === created.agentRunId));
+  const streamed = [];
+  for await (const event of client.runs.events(created.agentRunId)) {
+    streamed.push(event);
+    if (streamed.length === page.items.length) break;
+  }
+  assert.deepEqual(streamed.map((event) => event.seq), page.items.map((event) => event.seq));
+  const held = await client.runs.create({ harness: 'mock', request: { scenario: 'hold' } });
+  assert.notEqual((await client.runs.get(held.agentRunId)).lifecycle, 'terminal');
+  const heldChild = await client.runs.create({ harness: 'mock', request: { scenario: 'normal' }, parentRunId: held.agentRunId });
+  const kids = await client.runs.children(held.agentRunId);
+  assert.deepEqual(kids.items.map((run) => run.agentRunId), [heldChild.agentRunId]);
+  await client.runs.wait(heldChild.agentRunId, { timeoutMs: 5000 });
+  const waiter = new AbortController();
+  const aborted = client.runs.wait(held.agentRunId, { signal: waiter.signal });
+  waiter.abort();
+  await assert.rejects(aborted, (error) => error.name === 'AbortError');
+  assert.notEqual((await client.runs.get(held.agentRunId)).lifecycle, 'terminal');
+  await client.runs.cancel(held.agentRunId);
+  const cancelled = await client.runs.wait(held.agentRunId, { timeoutMs: 5000 });
+  assert.equal(cancelled.lifecycle, 'terminal');
+  assert.equal(cancelled.outcome, 'cancelled');
+  // Scoped agent-facing control over the same owner.
+  const principal = await client.runs.create({ harness: 'mock', request: { scenario: 'hold' } });
+  const { token } = await client.grantAgentControl(principal.agentRunId);
+  const agent = await connectAgent({ stateDir, agentToken: token });
+  try {
+    const spawned = await agent.agent_spawn({ harness: 'mock', request: { scenario: 'normal' } });
+    assert.equal(spawned.parentRunId, principal.agentRunId);
+    const spawnedDone = await agent.agent_wait(spawned.agentRunId, { timeoutMs: 5000 });
+    assert.equal(spawnedDone.outcome, 'completed');
+    assert.equal((await agent.agent_result(spawned.agentRunId)).ready, true);
+    assert.equal((await agent.agent_status(spawned.agentRunId)).agentRunId, spawned.agentRunId);
+  } finally {
+    await agent.close();
+  }
+  await client.runs.cancel(principal.agentRunId);
+  await client.runs.wait(principal.agentRunId, { timeoutMs: 5000 });
+  assert.equal((await client.status()).pid, owner.pid);
   await client.close();
   await owner.close();
   owner = await startResidentOwner({ stateDir, createService: service });
@@ -201,8 +253,8 @@ try {
   assert.equal(again.execution.executionRunId, settled.execution.executionRunId);
   // Historical projection from durable state agrees with the live one.
   const replayedLive = await collectLiveProjection(client.runs);
-  assert.equal(replayedLive.fleet[0].agentRunId, created.agentRunId);
-  assert.equal(replayedLive.fleet[0].outcome, 'completed');
+  const replayedRun = replayedLive.fleet.find((entry) => entry.agentRunId === created.agentRunId);
+  assert.equal(replayedRun.outcome, 'completed');
   await client.close();
   await owner.close();
 } finally { rmSync(stateDir, { recursive: true, force: true }); }
@@ -211,8 +263,17 @@ try {
   run(process.execPath, ["sdk.mjs"]);
 
   const cli = join(consumer, "node_modules", ".bin", "tsukai");
-  assert.match(run(cli, ["--help"]), /mock preview/);
-  assert.equal(run(cli, ["--version"]).trim(), "0.1.0");
+  {
+    const help = run(cli, ["--help"]);
+    assert.match(help, /AgentRun lifecycle and observation/);
+    assert.match(help, /mock preview/);
+    assert.match(help, /owner serve/);
+  }
+  const { version } = JSON.parse(
+    await readFile(join(root, "package.json"), "utf8"),
+  );
+  assert.equal(packed.version, version);
+  assert.equal(run(cli, ["--version"]).trim(), version);
   const jsonl = run(cli, ["demo", "--json"]);
   for (const line of jsonl.trim().split("\n"))
     assert.equal(JSON.parse(line).schemaVersion, 1);

@@ -1,6 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -40,14 +46,21 @@ try {
 
   const bin = join(consumer, "node_modules", ".bin", "tsukai");
   assert.ok(existsSync(bin), "npm did not create the tsukai launcher");
-  assert.equal(run(bin, ["--version"], consumer).trim(), "0.1.0");
-  assert.match(run(bin, ["--help"], consumer), /tsukai 0\.1\.0/);
+  const { version } = JSON.parse(
+    readFileSync(resolve(import.meta.dirname, "..", "package.json"), "utf8"),
+  );
+  assert.equal(run(bin, ["--version"], consumer).trim(), version);
+  assert.ok(
+    run(bin, ["--help"], consumer).startsWith(`tsukai ${version} `),
+    "help header must carry the package version",
+  );
 
   writeFileSync(
     join(consumer, "sdk.mjs"),
-    "import { createMemoryJournal, createPiRuntime, createJinushiClient } from 'tsukai';\n" +
+    "import { createMemoryJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, startResidentOwner, connectOwner, connectAgent, collectLiveProjection, projectReplay, renderOperatorProjection, createHarnessRuntime, createPiHarnessAdapter, createClaudeCodeHarnessAdapter, executionProfileFingerprint, ExecutionProfileError, HarnessCapabilityError, PI_CAPABILITIES, PI_EXECUTION_PROFILE_CAPABILITIES, EXECUTION_PROFILE_SCHEMA_VERSION } from 'tsukai';\n" +
       "import { createMockRuntime } from 'tsukai/testing';\n" +
-      "if (![createMemoryJournal, createPiRuntime, createJinushiClient, createMockRuntime].every(v => typeof v === 'function')) process.exit(1);\n",
+      "if (![createMemoryJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, startResidentOwner, connectOwner, connectAgent, collectLiveProjection, projectReplay, renderOperatorProjection, createHarnessRuntime, createPiHarnessAdapter, createClaudeCodeHarnessAdapter, executionProfileFingerprint, ExecutionProfileError, HarnessCapabilityError, createMockRuntime].every(v => typeof v === 'function')) process.exit(1);\n" +
+      "if (PI_CAPABILITIES.harness.name !== 'pi' || PI_EXECUTION_PROFILE_CAPABILITIES.model.tsukai !== 'configurable' || EXECUTION_PROFILE_SCHEMA_VERSION !== 1) process.exit(1);\n",
   );
   run(process.execPath, ["sdk.mjs"], consumer);
   console.log("tsukai packed-package smoke passed");

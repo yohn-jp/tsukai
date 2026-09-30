@@ -10,7 +10,11 @@
     "skipLibCheck": true,
     "types": ["node", "vitest/globals"],
     "rootDir": ".",
-    "outDir": "dist"
+    "outDir": "dist",
+    "paths": {
+      "tsukai": ["./src/index.ts"],
+      "tsukai/testing": ["./src/testing/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts", "examples/**/*.ts"]
 }
