@@ -32,8 +32,10 @@ export { createFileDurableStore } from "./durable/file-store.js";
 export type { FileDurableStoreOptions } from "./durable/file-store.js";
 export { startResidentOwner } from "./owner/server.js";
 export type { ResidentOwner, ResidentOwnerOptions } from "./owner/server.js";
-export { connectOwner } from "./owner/client.js";
+export { connectAgent, connectOwner } from "./owner/client.js";
 export type {
+  AgentClient,
+  AgentCredential,
   OwnerClient,
   OwnerClientOptions,
   OwnerRunOperations,

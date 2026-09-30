@@ -208,6 +208,12 @@ function parseSnapshot(value: unknown): RunSnapshot {
   };
   const parentRunId = optStr(record, "parentRunId", 256);
   if (parentRunId !== undefined) snapshot.parentRunId = parentRunId;
+  const spawnedBy = optStr(record, "spawnedBy", 256);
+  if (spawnedBy !== undefined) {
+    if (spawnedBy !== parentRunId)
+      bad("snapshot.spawnedBy must equal parentRunId");
+    snapshot.spawnedBy = spawnedBy;
+  }
   if (record.workspace !== undefined) {
     const workspace = obj(record.workspace, "snapshot.workspace");
     const workspaceSessionId = optStr(workspace, "workspaceSessionId", 256);

@@ -111,6 +111,13 @@ function validatePiInput(
   ) {
     throw new TypeError("parentRunId must be a non-empty string");
   }
+  if (
+    input.spawnedBy !== undefined &&
+    (typeof input.spawnedBy !== "string" ||
+      input.spawnedBy !== input.parentRunId)
+  ) {
+    throw new TypeError("spawnedBy must equal parentRunId");
+  }
   return {
     harness: "pi",
     request: { prompt: request.prompt },
@@ -119,6 +126,7 @@ function validatePiInput(
     ...(input.parentRunId === undefined
       ? {}
       : { parentRunId: input.parentRunId }),
+    ...(input.spawnedBy === undefined ? {} : { spawnedBy: input.spawnedBy }),
   };
 }
 

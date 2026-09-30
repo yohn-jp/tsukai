@@ -7,6 +7,7 @@ export const DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
 
 export type OwnerErrorCode =
   | "UNAUTHENTICATED"
+  | "FORBIDDEN"
   | "INVALID_REQUEST"
   | "RUN_NOT_FOUND"
   | "WAIT_TIMEOUT"

@@ -132,6 +132,11 @@ export async function ownerCommand(args: string[]): Promise<void> {
       print(await client.runs.get(id));
     } else if (verb === "result") {
       print(await client.runs.result(id));
+    } else if (verb === "grant") {
+      // Operator-only; the secret is printed once and only its hash is stored.
+      print(await client.grantAgentControl(id));
+    } else if (verb === "revoke") {
+      print(await client.revokeAgentControl(id));
     } else if (verb === "cancel") {
       print(await client.runs.cancel(id));
     } else if (verb === "wait") {

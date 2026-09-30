@@ -18,6 +18,7 @@ Usage:
   tsukai run get|result|cancel <id> --state-dir D
   tsukai run wait <id> --state-dir D [--timeout-ms N]
   tsukai run list --state-dir D
+  tsukai run grant|revoke <id> --state-dir D   (operator: agent credential for a run)
 
 demo --json writes metadata-only JSONL to stdout; diagnostics use stderr.
 Each invocation owns only its own temporary mock workers.
