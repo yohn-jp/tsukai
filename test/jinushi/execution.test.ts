@@ -542,7 +542,7 @@ describe("Jinushi Pi execution adapter", () => {
       },
     });
     await expect(execution.closeInput()).resolves.toBeUndefined();
-    expect(client.closeInputCalls).toBe(2);
+    expect(client.closeInputCalls).toBe(1);
     await port.dispose();
   });
 });

@@ -62,10 +62,7 @@ function verifyPiSource() {
 
 async function certifyJinushi() {
   const actualExecutable = verifyPiSource();
-  const actualStateDir = requireAbsolute(
-    "TSUKAI_JINUSHI_STATE_DIR",
-    stateDir,
-  );
+  const actualStateDir = requireAbsolute("TSUKAI_JINUSHI_STATE_DIR", stateDir);
   const actualWorkspace = requireAbsolute(
     "TSUKAI_JINUSHI_WORKSPACE",
     workspace,

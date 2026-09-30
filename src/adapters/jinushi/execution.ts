@@ -101,7 +101,10 @@ function controlRequestId(): string {
   return randomUUID();
 }
 
-async function retryAmbiguous<T>(operation: string, attempt: () => Promise<T>): Promise<T> {
+async function retryAmbiguous<T>(
+  operation: string,
+  attempt: () => Promise<T>,
+): Promise<T> {
   try {
     return await attempt();
   } catch (error) {
