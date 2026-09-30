@@ -30,3 +30,14 @@ export {
 } from "./observation/index.js";
 export { createFileDurableStore } from "./durable/file-store.js";
 export type { FileDurableStoreOptions } from "./durable/file-store.js";
+export { startResidentOwner } from "./owner/server.js";
+export type { ResidentOwner, ResidentOwnerOptions } from "./owner/server.js";
+export { connectOwner } from "./owner/client.js";
+export type {
+  OwnerClient,
+  OwnerClientOptions,
+  OwnerRunOperations,
+  OwnerStatus,
+} from "./owner/client.js";
+export { OwnerError } from "./owner/protocol.js";
+export type { OwnerErrorCode } from "./owner/protocol.js";
