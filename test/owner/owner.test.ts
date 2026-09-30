@@ -21,7 +21,7 @@ import {
   type ResidentOwner,
 } from "../../src/index.js";
 import { FakeSupervisor } from "../durable/fake-supervisor.js";
-import { PROMPT, tempDir, until, WORKSPACE } from "../durable/harness.js";
+import { PROMPT, tempDir, WORKSPACE } from "../durable/harness.js";
 
 const cleanups: (() => void | Promise<void>)[] = [];
 afterEach(async () => {
@@ -64,6 +64,19 @@ async function client(dir: string): Promise<OwnerClient> {
   const connected = await connectOwner({ stateDir: dir });
   cleanups.push(() => connected.close());
   return connected;
+}
+
+async function until<T>(
+  read: () => Promise<T | false> | T | false,
+  timeoutMs = 2_000,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await read();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error("condition not reached");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 const input = {
@@ -175,6 +188,34 @@ describe("resident owner over local IPC", () => {
   });
 });
 
+describe("owner reconciliation", () => {
+  it("keeps reconciling an unreachable backend and resolves on later evidence", async () => {
+    const { dir, sup } = setup();
+    sup.holdTranscript = true;
+    const first = await boot(dir, sup);
+    const connected = await client(dir);
+    const created = await connected.runs.create(input);
+    await until(() => sup.only().heldTranscript);
+    await first.close("detach");
+    sup.outage = true;
+    await boot(dir, sup, { reconcileIntervalMs: 20 });
+    expect(await connected.runs.get(created.agentRunId)).toMatchObject({
+      lifecycle: "uncertain",
+      recovery: { reason: "jinushi-inspect-failed" },
+    });
+    sup.outage = false;
+    sup.releaseTranscript(sup.only());
+    // `wait` resolves on uncertainty; resolution arrives via the timer.
+    const done = await until(async () => {
+      const snapshot = await connected.runs.get(created.agentRunId);
+      return snapshot.lifecycle === "terminal" && snapshot;
+    }, 3_000);
+    expect(done).toMatchObject({ lifecycle: "terminal", outcome: "completed" });
+    expect(sup.runStarts).toBe(1);
+    expect(sup.prompts).toBe(1);
+  });
+});
+
 describe("IPC access control", () => {
   it("is a private Unix socket with no network listener", async () => {
     const { dir, sup } = setup();
@@ -207,7 +248,8 @@ describe("IPC access control", () => {
         let received = "";
         socket.on("data", (chunk) => (received += chunk.toString()));
         socket.on("close", () => resolve(received));
-        socket.on("error", reject);
+        // A reset after the owner's reply still leaves the reply readable.
+        socket.on("error", () => resolve(received));
         socket.on("connect", () => {
           for (const line of lines) socket.write(`${line}\n`);
         });

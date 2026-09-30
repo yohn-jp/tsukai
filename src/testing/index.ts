@@ -26,5 +26,6 @@ export function createMockRuntime(): MockRuntime {
   };
 }
 
+export { createMockExecutionPort } from "../adapters/mock/execution.js";
 export { createPiCertificationExecutionPort } from "./pi/execution.js";
 export type { PiCertificationExecutionPortOptions } from "./pi/execution.js";

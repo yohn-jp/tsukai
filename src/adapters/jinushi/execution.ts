@@ -833,6 +833,11 @@ class JinushiPiExecution implements PiDuplexExecution {
     }
   }
 
+  /** True once this observation can no longer be trusted. */
+  isFailed(): boolean {
+    return this.reportedError;
+  }
+
   /** Stops observing. The physical Run is left untouched. */
   detach(): void {
     if (!this.controller.signal.aborted) this.controller.abort();
@@ -1259,8 +1264,14 @@ export function createJinushiPiExecutionPort(
       } catch {
         return { status: "ambiguous", reason: "execution-identity-invalid" };
       }
-      if (executions.has(executionRunId)) {
-        return { status: "ambiguous", reason: "execution-already-attached" };
+      const existing = executions.get(executionRunId);
+      if (existing !== undefined) {
+        if (!existing.isFailed()) {
+          return { status: "ambiguous", reason: "execution-already-attached" };
+        }
+        // A failed observation is replaced, never run alongside a new one.
+        existing.detach();
+        executions.delete(executionRunId);
       }
       // Read-only evidence first: attaching must never create a Run.
       let run: JinushiRun;

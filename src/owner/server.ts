@@ -26,18 +26,23 @@ import {
 } from "./protocol.js";
 import { assertPosix, assertPrivateDirectory } from "./security.js";
 
+/** Any harness-specific RunService: its own validator guards `create`. */
+export type OwnerService = RunService<never, never>;
+
 export interface ResidentOwnerOptions {
   /** Private directory holding the durable store, socket, and access token. */
   stateDir: string;
   /** Builds the one canonical service over the durable store. */
-  createService(
-    store: DurableStore,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  ): RunService<any, any> | Promise<RunService<any, any>>;
+  createService(store: DurableStore): OwnerService | Promise<OwnerService>;
   maxConnections?: number;
   maxFrameBytes?: number;
   maxRequestsPerConnection?: number;
   helloTimeoutMs?: number;
+  /**
+   * Retry interval for runs whose backend evidence was unavailable
+   * (reconciling/uncertain). 0 disables the timer; explicit `reconcile` still works.
+   */
+  reconcileIntervalMs?: number;
   fsync?: boolean;
 }
 
@@ -113,14 +118,17 @@ export async function startResidentOwner(
     dir: join(stateDir, "store"),
     ...(options.fsync === undefined ? {} : { fsync: options.fsync }),
   });
-  let service: RunService<any, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  let service: OwnerService | undefined;
   try {
     service = await options.createService(store);
     await service.reconcile();
   } catch (error) {
+    // Leave any Jinushi-owned execution running; only stop observing.
+    await service?.detach().catch(() => undefined);
     store.close();
     throw error;
   }
+  const canonical: OwnerService = service;
 
   const token = randomBytes(32).toString("hex");
   const tokenBytes = Buffer.from(token, "utf8");
@@ -154,6 +162,14 @@ export async function startResidentOwner(
       for (const abort of aborts) abort.abort();
     });
 
+    let rejected = false;
+    /** Protocol violation: flush the error, then stop reading this peer. */
+    const reject = (response: OwnerResponse): void => {
+      if (rejected) return;
+      rejected = true;
+      send(response);
+      socket.end();
+    };
     const send = (response: OwnerResponse): void => {
       if (!socket.destroyed) socket.write(`${JSON.stringify(response)}\n`);
     };
@@ -194,13 +210,15 @@ export async function startResidentOwner(
         socket.end();
         return;
       }
-      const runs = service.runs;
+      const runs = canonical.runs;
       switch (op) {
         case "create":
           send({
             id,
             ok: true,
-            result: await runs.create(request.input as RunCreateInput),
+            result: await runs.create(
+              request.input as RunCreateInput<never, never>,
+            ),
           });
           return;
         case "get":
@@ -314,7 +332,7 @@ export async function startResidentOwner(
           send({ id, ok: true, result: null });
           return;
         case "reconcile":
-          send({ id, ok: true, result: await service.reconcile() });
+          send({ id, ok: true, result: await canonical.reconcile() });
           return;
         case "status":
           send({
@@ -350,7 +368,7 @@ export async function startResidentOwner(
           }
           request = parsed as OwnerRequest;
         } catch (error) {
-          send({
+          reject({
             id: 0,
             ok: false,
             error:
@@ -358,7 +376,6 @@ export async function startResidentOwner(
                 ? classify(error)
                 : { code: "INVALID_REQUEST", message: "Malformed request" },
           });
-          socket.destroy();
           return;
         }
         if (inFlight >= maxRequests) {
@@ -380,11 +397,12 @@ export async function startResidentOwner(
           });
       },
       (error) => {
-        send({ id: 0, ok: false, error: classify(error) });
-        socket.destroy();
+        reject({ id: 0, ok: false, error: classify(error) });
       },
     );
-    socket.on("data", reader);
+    socket.on("data", (chunk: Buffer) => {
+      if (!rejected) reader(chunk);
+    });
   });
 
   try {
@@ -397,8 +415,18 @@ export async function startResidentOwner(
     });
     chmodSync(socketPath, 0o600);
   } catch (error) {
-    await service.detach().catch(() => undefined);
+    await canonical.detach().catch(() => undefined);
     throw error;
+  }
+
+  const interval = options.reconcileIntervalMs ?? 30_000;
+  let reconcileTimer: ReturnType<typeof setInterval> | undefined;
+  if (interval > 0) {
+    reconcileTimer = setInterval(() => {
+      // Only unattached runs are touched; a failed pass is retried next tick.
+      void canonical.reconcile().catch(() => undefined);
+    }, interval);
+    reconcileTimer.unref();
   }
 
   let closing: Promise<void> | undefined;
@@ -407,6 +435,7 @@ export async function startResidentOwner(
     pid: process.pid,
     close(mode = "detach"): Promise<void> {
       closing ??= (async () => {
+        if (reconcileTimer !== undefined) clearInterval(reconcileTimer);
         await new Promise<void>((resolve) => {
           server.close(() => resolve());
           for (const socket of sockets) socket.destroy();
@@ -418,8 +447,8 @@ export async function startResidentOwner(
             /* already gone */
           }
         }
-        if (mode === "dispose") await service.dispose();
-        else await service.detach();
+        if (mode === "dispose") await canonical.dispose();
+        else await canonical.detach();
       })();
       return closing;
     },

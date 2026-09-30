@@ -734,11 +734,18 @@ export function createRunService<
     onExit: (receipt) => processExit(run, receipt),
     onError: (error) => {
       if (run.lifecycle === "terminal") return;
-      append(run, {
-        source: "execution",
-        kind: "execution.error",
-        payload: { category: "transport" },
-      });
+      // This observation is dead; a later reconcile may attach a new one.
+      run.attached = false;
+      if (!(
+        run.lifecycle === "uncertain" &&
+        run.recovery?.reason === "execution-observation-lost"
+      )) {
+        append(run, {
+          source: "execution",
+          kind: "execution.error",
+          payload: { category: "transport" },
+        });
+      }
       if (isObservationGap(error)) {
         recordGap(run, {
           kind: error.gapKind,
@@ -850,8 +857,14 @@ export function createRunService<
    */
   const loadDurableRuns = (): void => {
     if (store === undefined) return;
-    for (const state of store.loadRuns()) {
-      if (runs.size >= limits.maxRuns) break;
+    const persisted = store.loadRuns();
+    if (persisted.length > limits.maxRuns) {
+      // Never drop durable runs silently to fit an in-memory bound.
+      throw new RangeError(
+        `Durable store holds ${persisted.length} runs, above the maxRuns limit of ${limits.maxRuns}`,
+      );
+    }
+    for (const state of persisted) {
       const run = restoreRun(state);
       runs.set(run.agentRunId, run);
       order.push(run.agentRunId);
@@ -981,6 +994,15 @@ export function createRunService<
             run,
             run.outcomeCandidate.outcome === "cancelled" ? "cancel" : "settled",
           );
+        }
+        if (
+          outcome.physical === "terminal" &&
+          run.lifecycle === "reconciling" &&
+          run.receipt === undefined
+        ) {
+          // Terminal was reported but no receipt reached the owner.
+          markUncertain(run, "execution-terminal-without-receipt");
+          return;
         }
         // A gap can leave the decoder without the evidence to classify.
         if (run.lifecycle === "uncertain" && run.recovery?.gaps.length) return;

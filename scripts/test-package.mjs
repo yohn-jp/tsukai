@@ -49,6 +49,8 @@ try {
   );
   assert(files.includes("dist/adapters/jinushi/client.js"));
   assert(files.includes("dist/adapters/jinushi/execution.js"));
+  assert(files.includes("dist/owner/server.js"));
+  assert(files.includes("dist/durable/file-store.js"));
   assert(
     files.every(
       (file) =>
@@ -67,14 +69,18 @@ try {
   ]);
 
   const script = `import assert from 'node:assert/strict';
-import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION } from 'tsukai';
-import { createMockRuntime, createPiCertificationExecutionPort } from 'tsukai/testing';
+import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createRunService, createMockHarness, startResidentOwner, connectOwner, createFileDurableStore, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION } from 'tsukai';
+import { createMockRuntime, createMockExecutionPort, createPiCertificationExecutionPort } from 'tsukai/testing';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 const journal = createMemoryJournal();
 assert.equal(typeof replayJournal, 'function');
 assert.equal(typeof createPiRuntime, 'function');
 assert.equal(typeof createJinushiClient, 'function');
 assert.equal(typeof createJinushiPiExecutionPort, 'function');
 assert.equal(typeof createPiCertificationExecutionPort, 'function');
+assert.equal(typeof createFileDurableStore, 'function');
 assert.equal(SUPPORTED_PI_VERSION, '0.99.1');
 assert.equal(SUPPORTED_PI_REVISION, 'd86654abb8862e201933517d6f1fce9f88dd117f');
 assert.equal(journal.read('missing').items.length, 0);
@@ -85,6 +91,26 @@ try {
   assert.equal(terminal.outcome, 'completed');
   assert.equal(runtime.runs.result(run.agentRunId).ready, true);
 } finally { await runtime.dispose(); }
+// Resident owner over the packed package: durable registry and local IPC.
+const stateDir = mkdtempSync(join(tmpdir(), 'tsukai-consumer-'));
+const service = (store) => createRunService({ execution: createMockExecutionPort(), harness: createMockHarness(), journal: store, durableStore: store });
+try {
+  let owner = await startResidentOwner({ stateDir, createService: service });
+  let client = await connectOwner({ stateDir });
+  const created = await client.runs.create({ harness: 'mock', request: { scenario: 'normal' } });
+  const settled = await client.runs.wait(created.agentRunId, { timeoutMs: 5000 });
+  assert.equal(settled.outcome, 'completed');
+  await client.close();
+  await owner.close();
+  owner = await startResidentOwner({ stateDir, createService: service });
+  client = await connectOwner({ stateDir });
+  const again = await client.runs.get(created.agentRunId);
+  assert.equal(again.agentRunId, created.agentRunId);
+  assert.equal(again.outcome, 'completed');
+  assert.equal(again.execution.executionRunId, settled.execution.executionRunId);
+  await client.close();
+  await owner.close();
+} finally { rmSync(stateDir, { recursive: true, force: true }); }
 `;
   await writeFile(join(consumer, "sdk.mjs"), script);
   run(process.execPath, ["sdk.mjs"]);
@@ -104,7 +130,7 @@ try {
 
   await writeFile(
     join(consumer, "types.ts"),
-    `import { type RunSnapshot, type PiDuplexExecutionPort, type PiRunCreateInput, createMemoryJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort } from 'tsukai';\nimport { createMockRuntime, createPiCertificationExecutionPort } from 'tsukai/testing';\nconst journal = createMemoryJournal();\nconst runtime = createMockRuntime();\nconst port: PiDuplexExecutionPort | undefined = undefined;\nconst input: PiRunCreateInput = { harness: 'pi', request: { prompt: 'hello' } };\nconst snapshot: RunSnapshot | undefined = undefined;\nvoid [journal, runtime, port, input, snapshot, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createPiCertificationExecutionPort];\n`,
+    `import { type RunSnapshot, type PiDuplexExecutionPort, type PiRunCreateInput, type DurableStore, type OwnerClient, type ResidentOwner, createMemoryJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, startResidentOwner, connectOwner } from 'tsukai';\nimport { createMockRuntime, createPiCertificationExecutionPort } from 'tsukai/testing';\nconst journal = createMemoryJournal();\nconst runtime = createMockRuntime();\nconst port: PiDuplexExecutionPort | undefined = undefined;\nconst input: PiRunCreateInput = { harness: 'pi', request: { prompt: 'hello' } };\nconst snapshot: RunSnapshot | undefined = undefined;\nconst store: DurableStore | undefined = undefined;\nconst owner: ResidentOwner | undefined = undefined;\nconst ownerClient: OwnerClient | undefined = undefined;\nvoid [journal, runtime, port, input, snapshot, store, owner, ownerClient, startResidentOwner, connectOwner, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createPiCertificationExecutionPort];\n`,
   );
   await writeFile(
     join(consumer, "tsconfig.json"),

@@ -55,4 +55,4 @@ Certified against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` (Linux
 
 Provider-backed semantic certification: ENVIRONMENT_BLOCKED (no provider/model credentials in the certification environment). The Jinushi Pi port does not select provider models, so that lane is not implemented for Jinushi; only the direct-runner `certify:pi` lane exists.
 
-Remaining limitations: the Tsukai runtime is ephemeral (no resident owner or restart recovery; #13), certification ran on the Linux backend only, and Jinushi resource enforcement was unavailable in the certification environment (cgroup controllers not enforced).
+Remaining limitations at M1b closure: the Tsukai runtime was ephemeral (resident owner and restart recovery arrived with M2, #13; see [M2-OWNER.md](M2-OWNER.md)), certification ran on the Linux backend only, and Jinushi resource enforcement was unavailable in the certification environment (cgroup controllers not enforced).

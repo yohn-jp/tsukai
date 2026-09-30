@@ -37,10 +37,11 @@ export function createFrameReader(
   maxBytes: number,
   onFrame: (text: string) => void,
   onError: (error: Error) => void,
-): (chunk: Buffer) => void {
-  let pending: Buffer[] = [];
+): (chunk: Uint8Array) => void {
+  let pending: Uint8Array[] = [];
   let size = 0;
-  return (chunk) => {
+  return (input) => {
+    const chunk = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
     let start = 0;
     for (;;) {
       const newline = chunk.indexOf(0x0a, start);

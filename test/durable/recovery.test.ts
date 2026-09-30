@@ -556,6 +556,36 @@ describe("explicit uncertainty and gaps", () => {
   });
 });
 
+describe("durable registry bounds", () => {
+  it("refuses to start rather than silently dropping persisted runs", async () => {
+    const { dir, sup } = setup();
+    const owner = startOwner(dir, sup);
+    await create(owner);
+    await create(owner);
+    await owner.runtime.detach();
+    const { createFileDurableStore } = await import("../../src/index.js");
+    const { createPiRuntime, SUPPORTED_PI_REVISION, SUPPORTED_PI_VERSION } =
+      await import("../../src/index.js");
+    const store = createFileDurableStore({
+      dir: join(dir, "store"),
+      fsync: false,
+    });
+    expect(() =>
+      createPiRuntime({
+        execution: {
+          open: async () => Promise.reject(new Error("unused")),
+          dispose: async () => undefined,
+        },
+        piVersion: SUPPORTED_PI_VERSION,
+        piRevision: SUPPORTED_PI_REVISION,
+        durableStore: store,
+        limits: { maxRuns: 1 },
+      }),
+    ).toThrow(/maxRuns/);
+    store.close();
+  });
+});
+
 describe("repeated recovery", () => {
   it("converges: reconcile and restart can repeat without new effects", async () => {
     const { dir, sup } = setup();

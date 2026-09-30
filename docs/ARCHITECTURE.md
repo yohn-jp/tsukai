@@ -46,7 +46,7 @@ TypeScript SDK is the public programming surface; process isolation is a separat
 
 There is one writer/controller for a managed run. Jinushi owns the process and its byte transport; the Tsukai harness adapter is the sole RPC command writer and response correlator. UI, CLI, and parent agents subscribe to Tsukai projections, not competing readers/writers on Pi stdin/stdout. A Jinushi execution ID is not itself an attachable pipe: the real adapter must compose Jinushi's actual input/output and cursor contracts.
 
-The target owner is resident and local, with local authenticated/OS-access-controlled IPC. Owner restart recovery requires durable state and reconciliation. The initial preview instead hosts an ephemeral owner in one SDK/CLI process and declares that limitation; it does not promise daemon behavior or cross-invocation run control.
+The target owner is resident and local, with local authenticated/OS-access-controlled IPC. Owner restart recovery requires durable state and reconciliation. The M0 mock preview instead hosts an ephemeral owner in one SDK/CLI process and declares that limitation; the resident owner is the M2 path (see `M2-OWNER.md`).
 
 Ship one package, `tsukai`, with internal domain, application, observation, and adapter modules. Public SDK and a thin CLI are projections of the same service. Do not pre-create one package per layer or implement other harness adapters before Pi integration is proven.
 
