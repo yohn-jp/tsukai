@@ -27,6 +27,30 @@ export {
   createMockHarness,
   importJournal,
   replayJournal,
+  collectLiveProjection,
+  projectReplay,
+  projectObservation,
+  escapeDisplayText,
+  renderOperatorProjection,
+} from "./observation/index.js";
+export type {
+  CompactionSummary,
+  FleetRun,
+  OperatorProjection,
+  ProjectionGap,
+  ProjectionInput,
+  ProjectionMetric,
+  ProjectionMetricAvailability,
+  ProjectionProvenance,
+  RetrySummary,
+  RunCompleteness,
+  RunMetrics,
+  RunTreeNode,
+  TimelineEntry,
+  TimelineEvent,
+  TimelineGap,
+  ToolSummary,
+  UsageSummary,
 } from "./observation/index.js";
 export { createFileDurableStore } from "./durable/file-store.js";
 export type { FileDurableStoreOptions } from "./durable/file-store.js";

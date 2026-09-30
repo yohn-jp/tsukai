@@ -1,5 +1,6 @@
 import type {
   ObservationEnvelope,
+  ObservationPage,
   Page,
   RunCreateInput,
   HarnessName,
@@ -28,6 +29,11 @@ export interface RunOperations<
     agentRunId: string,
     afterSeq?: number,
   ): AsyncIterable<ObservationEnvelope>;
+  eventsPage(
+    agentRunId: string,
+    afterSeq?: number,
+    limit?: number,
+  ): ObservationPage;
   result(agentRunId: string): RunResult;
 }
 

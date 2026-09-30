@@ -1288,6 +1288,11 @@ export function createRunService<
         return options.journal.subscribe(agentRunId, afterSeq);
       },
 
+      eventsPage: (agentRunId, afterSeq, limit) => {
+        requireRun(agentRunId);
+        return options.journal.read(agentRunId, afterSeq, limit);
+      },
+
       result: (agentRunId): RunResult => {
         const run = requireRun(agentRunId);
         if (

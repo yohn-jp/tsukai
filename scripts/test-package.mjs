@@ -69,7 +69,7 @@ try {
   ]);
 
   const script = `import assert from 'node:assert/strict';
-import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createRunService, createMockHarness, startResidentOwner, connectOwner, createFileDurableStore, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION } from 'tsukai';
+import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createRunService, createMockHarness, startResidentOwner, connectOwner, createFileDurableStore, collectLiveProjection, projectReplay, renderOperatorProjection, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION } from 'tsukai';
 import { createMockRuntime, createMockExecutionPort, createPiCertificationExecutionPort } from 'tsukai/testing';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -81,6 +81,9 @@ assert.equal(typeof createJinushiClient, 'function');
 assert.equal(typeof createJinushiPiExecutionPort, 'function');
 assert.equal(typeof createPiCertificationExecutionPort, 'function');
 assert.equal(typeof createFileDurableStore, 'function');
+assert.equal(typeof collectLiveProjection, 'function');
+assert.equal(typeof projectReplay, 'function');
+assert.equal(typeof renderOperatorProjection, 'function');
 assert.equal(SUPPORTED_PI_VERSION, '0.99.1');
 assert.equal(SUPPORTED_PI_REVISION, 'd86654abb8862e201933517d6f1fce9f88dd117f');
 assert.equal(journal.read('missing').items.length, 0);
@@ -100,6 +103,15 @@ try {
   const created = await client.runs.create({ harness: 'mock', request: { scenario: 'normal' } });
   const settled = await client.runs.wait(created.agentRunId, { timeoutMs: 5000 });
   assert.equal(settled.outcome, 'completed');
+  // Operator projection layer over the resident owner's read-only APIs only.
+  const live = await collectLiveProjection(client.runs);
+  assert.equal(live.fleet.length, 1);
+  assert.equal(live.fleet[0].agentRunId, created.agentRunId);
+  assert.equal(live.fleet[0].lineage, 'root');
+  assert.ok(live.completeness.status === 'complete' || live.completeness.status === 'incomplete');
+  assert.ok(Array.isArray(live.timeline));
+  const rendered = renderOperatorProjection(live, 'text');
+  assert.match(rendered, /^completeness=/);
   await client.close();
   await owner.close();
   owner = await startResidentOwner({ stateDir, createService: service });
@@ -108,6 +120,10 @@ try {
   assert.equal(again.agentRunId, created.agentRunId);
   assert.equal(again.outcome, 'completed');
   assert.equal(again.execution.executionRunId, settled.execution.executionRunId);
+  // Historical projection from durable state agrees with the live one.
+  const replayedLive = await collectLiveProjection(client.runs);
+  assert.equal(replayedLive.fleet[0].agentRunId, created.agentRunId);
+  assert.equal(replayedLive.fleet[0].outcome, 'completed');
   await client.close();
   await owner.close();
 } finally { rmSync(stateDir, { recursive: true, force: true }); }
@@ -124,9 +140,26 @@ try {
   const recordPath = join(consumer, "demo.jsonl");
   await writeFile(recordPath, jsonl);
   const replayed = JSON.parse(run(cli, ["replay", recordPath, "--json"]));
-  assert(replayed.runs.length >= 3);
-  assert(replayed.runs.every((entry) => entry.lifecycle === "terminal"));
+  assert(replayed.fleet.length >= 3);
+  assert(replayed.fleet.every((entry) => entry.lifecycle === "terminal"));
+  assert(replayed.tree.length >= 1, "operator tree must be projected");
+  assert(replayed.timeline.length > 0, "operator timeline must be projected");
+  assert(
+    Object.keys(replayed.metrics).length === replayed.fleet.length,
+    "operator metrics must cover every projected run",
+  );
+  assert(
+    ["complete", "incomplete"].includes(replayed.completeness.status),
+    "operator completeness must be explicit",
+  );
   assert(!JSON.stringify(replayed).includes("secret"));
+
+  const replayedText = run(cli, ["replay", recordPath]);
+  assert.match(replayedText, /^completeness=/);
+  assert.match(replayedText, /\nfleet:\n/);
+  assert.match(replayedText, /\ntree:\n/);
+  assert.match(replayedText, /\ntimeline:\n/);
+  assert.match(replayedText, /\nmetrics:\n/);
 
   await writeFile(
     join(consumer, "types.ts"),

@@ -86,6 +86,21 @@ const SNAPSHOT_KEYS = new Set([
   "outcome",
   "reason",
   "completeness",
+  "recovery",
+]);
+const RECOVERY_STATES = new Set([
+  "none",
+  "pending",
+  "reconciling",
+  "attached",
+  "terminal",
+  "uncertain",
+]);
+const RECOVERY_GAP_KINDS = new Set([
+  "event",
+  "output",
+  "journal",
+  "observation",
 ]);
 
 function invalid(message: string): never {
@@ -140,8 +155,11 @@ function validateSnapshot(
   const agentRunId = boundedString(value.agentRunId, "snapshot.agentRunId");
   if (agentRunId !== eventRunId)
     return invalid("run.snapshot runId does not match snapshot.agentRunId");
-  if (!isRecord(value.harness) || value.harness.name !== "mock") {
-    return invalid("run.snapshot harness must identify the mock harness");
+  if (
+    !isRecord(value.harness) ||
+    (value.harness.name !== "mock" && value.harness.name !== "pi")
+  ) {
+    return invalid("run.snapshot harness must identify a supported harness");
   }
   if (
     Object.keys(value.harness).some(
@@ -205,7 +223,10 @@ function validateSnapshot(
 
   const result: RunSnapshot = {
     agentRunId,
-    harness: { name: "mock", version: harnessVersion },
+    harness: {
+      name: value.harness.name,
+      version: harnessVersion,
+    },
     metadata,
     lifecycle: value.lifecycle as Lifecycle,
     semantic: value.semantic as SemanticState,
@@ -218,7 +239,11 @@ function validateSnapshot(
   const parentRunId = optionalString(value, "parentRunId");
   if (parentRunId !== undefined) result.parentRunId = parentRunId;
   const spawnedBy = optionalString(value, "spawnedBy");
-  if (spawnedBy !== undefined) result.spawnedBy = spawnedBy;
+  if (spawnedBy !== undefined) {
+    if (spawnedBy !== parentRunId)
+      return invalid("run.snapshot spawnedBy must equal parentRunId");
+    result.spawnedBy = spawnedBy;
+  }
 
   if (value.workspace !== undefined) {
     if (!isRecord(value.workspace))
@@ -246,16 +271,27 @@ function validateSnapshot(
     if (
       isRecord(value.execution) &&
       Object.keys(value.execution).some(
-        (key) => key !== "executionRunId" && key !== "backend" && key !== "pid",
+        (key) =>
+          ![
+            "executionRunId",
+            "backend",
+            "pid",
+            "sessionId",
+            "piVersion",
+            "piRevision",
+          ].includes(key),
       )
     ) {
       return invalid("run.snapshot execution binding has an unknown field");
     }
     if (
       !isRecord(value.execution) ||
-      value.execution.backend !== "mock-fixture" ||
-      !Number.isSafeInteger(value.execution.pid) ||
-      (value.execution.pid as number) < 1
+      typeof value.execution.backend !== "string" ||
+      value.execution.backend.length === 0 ||
+      utf8Bytes(value.execution.backend) > 256 ||
+      (value.execution.pid !== undefined &&
+        (!Number.isSafeInteger(value.execution.pid) ||
+          (value.execution.pid as number) < 1))
     ) {
       return invalid("run.snapshot execution binding is invalid");
     }
@@ -264,8 +300,36 @@ function validateSnapshot(
         value.execution.executionRunId,
         "snapshot.executionRunId",
       ),
-      backend: "mock-fixture",
-      pid: value.execution.pid as number,
+      backend: value.execution.backend,
+      ...(value.execution.pid === undefined
+        ? {}
+        : { pid: value.execution.pid as number }),
+      ...(value.execution.sessionId === undefined
+        ? {}
+        : {
+            sessionId: boundedString(
+              value.execution.sessionId,
+              "snapshot.execution.sessionId",
+            ),
+          }),
+      ...(value.execution.piVersion === undefined
+        ? {}
+        : {
+            piVersion: boundedString(
+              value.execution.piVersion,
+              "snapshot.execution.piVersion",
+              128,
+            ),
+          }),
+      ...(value.execution.piRevision === undefined
+        ? {}
+        : {
+            piRevision: boundedString(
+              value.execution.piRevision,
+              "snapshot.execution.piRevision",
+              128,
+            ),
+          }),
     };
   }
 
@@ -320,6 +384,59 @@ function validateSnapshot(
   }
   const reason = optionalString(value, "reason");
   if (reason !== undefined) result.reason = reason;
+  if (value.recovery !== undefined) {
+    if (!isRecord(value.recovery))
+      return invalid("run.snapshot recovery is invalid");
+    if (
+      typeof value.recovery.state !== "string" ||
+      !RECOVERY_STATES.has(value.recovery.state) ||
+      !Number.isSafeInteger(value.recovery.epoch) ||
+      (value.recovery.epoch as number) < 0 ||
+      !Number.isSafeInteger(value.recovery.attempts) ||
+      (value.recovery.attempts as number) < 0 ||
+      !Array.isArray(value.recovery.gaps) ||
+      value.recovery.gaps.length > 16
+    ) {
+      return invalid("run.snapshot recovery state is invalid");
+    }
+    const recovery: NonNullable<RunSnapshot["recovery"]> = {
+      state: value.recovery.state as NonNullable<
+        RunSnapshot["recovery"]
+      >["state"],
+      epoch: value.recovery.epoch as number,
+      attempts: value.recovery.attempts as number,
+      gaps: [],
+    };
+    for (const rawGap of value.recovery.gaps) {
+      if (!isRecord(rawGap))
+        return invalid("run.snapshot recovery gap is invalid");
+      if (
+        typeof rawGap.kind !== "string" ||
+        !RECOVERY_GAP_KINDS.has(rawGap.kind) ||
+        typeof rawGap.code !== "string" ||
+        typeof rawGap.detectedAt !== "string" ||
+        !isTimestamp(rawGap.detectedAt)
+      ) {
+        return invalid("run.snapshot recovery gap is invalid");
+      }
+      recovery.gaps.push({
+        kind: rawGap.kind as NonNullable<
+          RunSnapshot["recovery"]
+        >["gaps"][number]["kind"],
+        code: boundedString(rawGap.code, "snapshot.recovery.gap.code", 128),
+        detectedAt: rawGap.detectedAt,
+      });
+    }
+    const recoveryReason = optionalString(value.recovery, "reason");
+    if (recoveryReason !== undefined) recovery.reason = recoveryReason;
+    const reconciledAt = optionalString(value.recovery, "reconciledAt");
+    if (reconciledAt !== undefined) {
+      if (!isTimestamp(reconciledAt))
+        return invalid("run.snapshot recovery reconciledAt is invalid");
+      recovery.reconciledAt = reconciledAt;
+    }
+    result.recovery = recovery;
+  }
   return result;
 }
 

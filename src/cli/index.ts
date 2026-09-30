@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { createMockRuntime } from "../testing/index.js";
-import { replayJournal } from "../observation/index.js";
+import {
+  projectReplay,
+  renderOperatorProjection,
+} from "../observation/index.js";
 import { ownerCommand } from "./owner.js";
 
 const VERSION = "0.1.0";
@@ -12,6 +15,7 @@ Usage:
   tsukai --version
   tsukai demo [--json]
   tsukai replay <journal-path> [--json]
+  tsukai observe --state-dir D [--json]
   tsukai owner serve --state-dir D --jinushi-state-dir D --pi-executable P
   tsukai owner status --state-dir D
   tsukai run create --state-dir D --cwd D [--parent ID] [--label L]  (prompt on stdin)
@@ -73,17 +77,11 @@ async function demo(json: boolean): Promise<void> {
 
 async function replay(path: string, json: boolean): Promise<void> {
   const text = await readFile(path, "utf8");
-  const projection = replayJournal(text);
+  const projection = projectReplay(text);
   if (json) {
-    process.stdout.write(`${JSON.stringify(projection)}\n`);
+    process.stdout.write(renderOperatorProjection(projection, "json"));
   } else {
-    console.log(
-      "Tsukai metadata replay (no workers started; result text unavailable)",
-    );
-    for (const run of projection.runs)
-      console.log(
-        `${run.agentRunId} parent=${run.parentRunId ?? "-"} lifecycle=${run.lifecycle} outcome=${run.outcome ?? "-"} completeness=${run.completeness}`,
-      );
+    process.stdout.write(renderOperatorProjection(projection, "text"));
   }
 }
 
@@ -112,7 +110,7 @@ async function main(args: string[]): Promise<void> {
     await replay(args[1], args.includes("--json"));
     return;
   }
-  if (args[0] === "owner" || args[0] === "run") {
+  if (args[0] === "owner" || args[0] === "run" || args[0] === "observe") {
     await ownerCommand(args);
     return;
   }

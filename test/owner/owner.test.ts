@@ -20,6 +20,7 @@ import {
   type OwnerClient,
   type ResidentOwner,
 } from "../../src/index.js";
+import { ownerCommand } from "../../src/cli/owner.js";
 import { FakeSupervisor } from "../durable/fake-supervisor.js";
 import { PROMPT, tempDir, WORKSPACE } from "../durable/harness.js";
 
@@ -180,11 +181,49 @@ describe("resident owner over local IPC", () => {
       if (event.kind === "harness.settlement") break;
     }
     expect(kinds).toContain("harness.prompt_accepted");
+    const page = await connected.runs.eventsPage(created.agentRunId);
+    expect(page.items.map((event) => event.kind)).toContain(
+      "harness.prompt_accepted",
+    );
     await expect(connected.runs.get("missing")).rejects.toBeInstanceOf(
       RunNotFoundError,
     );
-    const page = await connected.runs.list({ limit: 1 });
-    expect(page.items).toHaveLength(1);
+    const runPage = await connected.runs.list({ limit: 1 });
+    expect(runPage.items).toHaveLength(1);
+  });
+
+  it("exposes the operator projection through the CLI observe command over a live owner", async () => {
+    const { dir, sup } = setup();
+    await boot(dir, sup);
+    const connected = await client(dir);
+    const created = await connected.runs.create(input);
+    await connected.runs.wait(created.agentRunId, { timeoutMs: 2_000 });
+
+    let output = "";
+    const write = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: unknown) => {
+      output += typeof chunk === "string" ? chunk : String(chunk);
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      await ownerCommand(["observe", "--state-dir", dir, "--json"]);
+    } finally {
+      process.stdout.write = write;
+    }
+
+    const projection = JSON.parse(output) as {
+      fleet: { agentRunId: string; lifecycle: string }[];
+      completeness: { status: string };
+    };
+    expect(projection.fleet.map((run) => run.agentRunId)).toContain(
+      created.agentRunId,
+    );
+    expect(
+      projection.fleet.find((run) => run.agentRunId === created.agentRunId),
+    ).toMatchObject({ lifecycle: "terminal" });
+    expect(["complete", "incomplete"]).toContain(
+      projection.completeness.status,
+    );
   });
 });
 

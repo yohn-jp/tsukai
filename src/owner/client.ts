@@ -5,6 +5,7 @@ import type { ReconcileReport } from "../contracts/service.js";
 import type {
   HarnessName,
   ObservationEnvelope,
+  ObservationPage,
   Page,
   RunCreateInput,
   RunResult,
@@ -71,6 +72,11 @@ export interface OwnerRunOperations {
     agentRunId: string,
     afterSeq?: number,
   ): AsyncIterable<ObservationEnvelope>;
+  eventsPage(
+    agentRunId: string,
+    afterSeq?: number,
+    limit?: number,
+  ): Promise<ObservationPage>;
   result(agentRunId: string): Promise<RunResult>;
 }
 
@@ -405,6 +411,12 @@ export async function connectOwner(
         },
       };
     },
+    eventsPage: (agentRunId, afterSeq, limit) =>
+      call("event-page", {
+        agentRunId,
+        ...(afterSeq === undefined ? {} : { afterSeq }),
+        ...(limit === undefined ? {} : { limit }),
+      }),
   };
 
   return {
