@@ -4,13 +4,51 @@ export * from "./contracts/limits.js";
 export type * from "./contracts/ports.js";
 export type * from "./contracts/service.js";
 export type * from "./contracts/durable.js";
+export { HarnessCapabilityError } from "./contracts/harness.js";
+export type {
+  DuplexAttachResult,
+  DuplexExecution,
+  DuplexExecutionPort,
+  DuplexTransportObserver,
+  HarnessAdapter,
+  HarnessCapabilities,
+  HarnessCapabilitySupport,
+  HarnessControlCapability,
+  HarnessControlOperation,
+  HarnessMetricAvailability,
+  HarnessNativeAvailability,
+} from "./contracts/harness.js";
 export { createRunService } from "./application/index.js";
 export {
+  createPiHarnessAdapter,
   createPiRuntime,
+  PI_CAPABILITIES,
   SUPPORTED_PI_VERSION,
   SUPPORTED_PI_REVISION,
 } from "./adapters/pi/index.js";
-export type { PiRuntime, PiRuntimeOptions } from "./adapters/pi/index.js";
+export type {
+  PiHarnessAdapterOptions,
+  PiRuntime,
+  PiRuntimeOptions,
+} from "./adapters/pi/index.js";
+export {
+  CLAUDE_CODE_CAPABILITIES,
+  createClaudeCodeHarnessAdapter,
+  createClaudeCodeRuntime,
+  SUPPORTED_CLAUDE_CODE_VERSION,
+} from "./adapters/claude-code/index.js";
+export type {
+  ClaudeCodeHarnessAdapterOptions,
+  ClaudeCodeRunCreateInput,
+  ClaudeCodeRunRequest,
+  ClaudeCodeRuntime,
+  ClaudeCodeRuntimeOptions,
+} from "./adapters/claude-code/index.js";
+export { createHarnessRuntime } from "./adapters/runtime.js";
+export type {
+  HarnessRuntime,
+  HarnessRuntimeOptions,
+} from "./adapters/runtime.js";
 export {
   createJinushiClient,
   JinushiClientError,
@@ -20,8 +58,14 @@ export type {
   JinushiClient,
   JinushiRunSpec,
 } from "./adapters/jinushi/contract.js";
-export { createJinushiPiExecutionPort } from "./adapters/jinushi/execution.js";
-export type { JinushiPiExecutionPortOptions } from "./adapters/jinushi/execution.js";
+export {
+  createJinushiClaudeCodeExecutionPort,
+  createJinushiPiExecutionPort,
+} from "./adapters/jinushi/execution.js";
+export type {
+  JinushiClaudeCodeExecutionPortOptions,
+  JinushiPiExecutionPortOptions,
+} from "./adapters/jinushi/execution.js";
 export {
   createMemoryJournal,
   createMockHarness,

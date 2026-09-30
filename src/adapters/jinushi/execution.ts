@@ -7,6 +7,7 @@ import type {
   PiTransportObserver,
 } from "../../contracts/pi.js";
 import type { PhysicalReceipt } from "../../contracts/types.js";
+import type { DuplexExecutionPort } from "../../contracts/harness.js";
 import type {
   JinushiClient,
   JinushiEventPage,
@@ -26,6 +27,28 @@ const PI_RPC_ARGS = [
   "--no-context-files",
   "--no-approve",
   "--no-tools",
+] as const;
+
+/**
+ * Claude Code headless stream-json mode, verified against the installed
+ * `claude` 2.1.285 CLI and `@anthropic-ai/claude-agent-sdk` 0.3.285 types:
+ * prompts arrive as stream-json user messages on stdin (never in argv), and
+ * no built-in tools, session persistence, or interactive permission prompts.
+ */
+const CLAUDE_CODE_ARGS = [
+  "-p",
+  "--bare",
+  "--input-format",
+  "stream-json",
+  "--output-format",
+  "stream-json",
+  "--verbose",
+  "--no-session-persistence",
+  "--strict-mcp-config",
+  "--permission-mode",
+  "dontAsk",
+  "--tools",
+  "",
 ] as const;
 
 const MAX_JINUSHI_INPUT_BYTES = 65_536;
@@ -1096,6 +1119,26 @@ class JinushiPiExecution implements PiDuplexExecution {
 export function createJinushiPiExecutionPort(
   options: JinushiPiExecutionPortOptions,
 ): PiDuplexExecutionPort {
+  return createJinushiDuplexExecutionPort(options, PI_RPC_ARGS);
+}
+
+export type JinushiClaudeCodeExecutionPortOptions =
+  JinushiPiExecutionPortOptions;
+
+/**
+ * One Jinushi Run per Tsukai AgentRun for Claude Code's headless stream-json
+ * protocol. The argv is fixed by this adapter; Jinushi owns the process.
+ */
+export function createJinushiClaudeCodeExecutionPort(
+  options: JinushiClaudeCodeExecutionPortOptions,
+): DuplexExecutionPort {
+  return createJinushiDuplexExecutionPort(options, CLAUDE_CODE_ARGS);
+}
+
+function createJinushiDuplexExecutionPort(
+  options: JinushiPiExecutionPortOptions,
+  harnessArgs: readonly string[],
+): PiDuplexExecutionPort {
   const executable = validateAbsolutePath(
     options.executable,
     "executable",
@@ -1194,7 +1237,7 @@ export function createJinushiPiExecutionPort(
       }
       const backend = await capabilities();
       const spec: JinushiRunSpec = {
-        argv: [executable, ...PI_RPC_ARGS],
+        argv: [executable, ...harnessArgs],
         cwd,
         environment: {
           mode: environment.mode,

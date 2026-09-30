@@ -1,9 +1,6 @@
 import { createRunService } from "../../application/index.js";
 import { DEFAULT_LIMITS, type RuntimeLimits } from "../../contracts/limits.js";
-import {
-  FORBIDDEN_JSON_KEYS,
-  isPrivateMetadataKey,
-} from "../../contracts/privacy.js";
+import { validatePromptRunInput } from "../prompt-input.js";
 import type {
   ExecutionObserver,
   ExecutionPort,
@@ -11,6 +8,10 @@ import type {
 } from "../../contracts/ports.js";
 import type { DurableStore } from "../../contracts/durable.js";
 import type { RunService } from "../../contracts/service.js";
+import type {
+  HarnessAdapter,
+  HarnessCapabilities,
+} from "../../contracts/harness.js";
 import type {
   PiDuplexExecution,
   PiDuplexExecutionPort,
@@ -31,6 +32,32 @@ import { createPiHarness } from "./semantic.js";
 export const SUPPORTED_PI_VERSION = "0.99.1";
 /** Upstream commit of the audited Pi `v0.99.1` release tag. */
 export const SUPPORTED_PI_REVISION = "d86654abb8862e201933517d6f1fce9f88dd117f";
+
+/** Machine-readable capabilities of the Pi RPC adapter (Pi-native evidence under `pi`). */
+export const PI_CAPABILITIES: Readonly<HarnessCapabilities> = Object.freeze({
+  schemaVersion: 1,
+  harness: { name: "pi", version: SUPPORTED_PI_VERSION },
+  protocol: "pi-rpc-jsonl",
+  evidenceNamespace: "pi",
+  session: { identity: "before-prompt" },
+  prompt: { delivery: "single", acceptance: "acknowledged" },
+  settlement: { evidence: "pi:agent_settled" },
+  cancellation: { abort: "native", retirement: "execution-owner" },
+  // Pi RPC has steer/follow_up commands; Tsukai's one-submission AgentRun
+  // does not route them.
+  steer: { tsukai: "unsupported", native: "available" },
+  followUp: { tsukai: "unsupported", native: "available" },
+  interaction: { tsukai: "unsupported", native: "available" },
+  observations: {
+    tools: "reported",
+    toolDurations: "reported",
+    usage: "reported",
+    cost: "reported",
+    retry: "reported",
+    compaction: "reported",
+  },
+  recovery: { reattach: "output-replay" },
+} satisfies HarnessCapabilities) as Readonly<HarnessCapabilities>;
 
 export interface PiRuntimeOptions {
   /** Physical ownership is supplied by the caller; this adapter never spawns Pi. */
@@ -56,78 +83,7 @@ function validatePiInput(
   input: PiRunCreateInput,
   limits: RuntimeLimits,
 ): PiRunCreateInput {
-  if (!input || typeof input !== "object" || input.harness !== "pi") {
-    throw new TypeError("Pi run input must select the pi harness");
-  }
-  const request = input.request;
-  if (
-    !request ||
-    typeof request !== "object" ||
-    typeof request.prompt !== "string" ||
-    request.prompt.length === 0 ||
-    Buffer.byteLength(request.prompt, "utf8") > limits.maxRecordBytes - 128
-  ) {
-    throw new TypeError("Pi prompt must be a bounded non-empty string");
-  }
-  const metadata = input.metadata ?? {};
-  if (
-    !metadata ||
-    typeof metadata !== "object" ||
-    Array.isArray(metadata) ||
-    Object.keys(metadata).length > limits.maxMetadataEntries
-  ) {
-    throw new TypeError("Pi run metadata is invalid or exceeds its limit");
-  }
-  for (const [key, value] of Object.entries(metadata)) {
-    if (
-      key.length === 0 ||
-      Buffer.byteLength(key, "utf8") > 128 ||
-      FORBIDDEN_JSON_KEYS.has(key) ||
-      isPrivateMetadataKey(key) ||
-      typeof value !== "string" ||
-      Buffer.byteLength(value, "utf8") > limits.maxMetadataValueBytes
-    ) {
-      throw new TypeError(
-        "Pi run metadata contains an invalid or private value",
-      );
-    }
-  }
-  const workspace = input.workspace;
-  if (
-    workspace !== undefined &&
-    (!workspace ||
-      typeof workspace.cwd !== "string" ||
-      workspace.cwd.length === 0 ||
-      (workspace.workspaceSessionId !== undefined &&
-        (typeof workspace.workspaceSessionId !== "string" ||
-          workspace.workspaceSessionId.length === 0 ||
-          Buffer.byteLength(workspace.workspaceSessionId, "utf8") > 256)))
-  ) {
-    throw new TypeError("Pi workspace configuration is invalid");
-  }
-  if (
-    input.parentRunId !== undefined &&
-    (typeof input.parentRunId !== "string" || input.parentRunId.length === 0)
-  ) {
-    throw new TypeError("parentRunId must be a non-empty string");
-  }
-  if (
-    input.spawnedBy !== undefined &&
-    (typeof input.spawnedBy !== "string" ||
-      input.spawnedBy !== input.parentRunId)
-  ) {
-    throw new TypeError("spawnedBy must equal parentRunId");
-  }
-  return {
-    harness: "pi",
-    request: { prompt: request.prompt },
-    metadata: { ...metadata },
-    ...(workspace === undefined ? {} : { workspace: { ...workspace } }),
-    ...(input.parentRunId === undefined
-      ? {}
-      : { parentRunId: input.parentRunId }),
-    ...(input.spawnedBy === undefined ? {} : { spawnedBy: input.spawnedBy }),
-  };
+  return validatePromptRunInput(input, limits, "pi", "Pi");
 }
 
 interface ActivePi {
@@ -137,8 +93,18 @@ interface ActivePi {
   startup?: Promise<void>;
 }
 
-/** Creates the Pi adapter over an injected execution owner. No direct spawn path exists here. */
-export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
+export type PiHarnessAdapterOptions = Pick<
+  PiRuntimeOptions,
+  "execution" | "piVersion" | "piRevision" | "limits" | "commandTimeoutMs"
+>;
+
+/**
+ * The Pi RPC harness adapter for the canonical RunService. Execution is the
+ * injected owner (Jinushi in production); this adapter never spawns Pi.
+ */
+export function createPiHarnessAdapter(
+  options: PiHarnessAdapterOptions,
+): HarnessAdapter<PiRunRequest, "pi"> {
   if (options.piVersion !== SUPPORTED_PI_VERSION) {
     throw new RangeError(
       `Unsupported Pi RPC version: ${String(options.piVersion)}`,
@@ -155,15 +121,6 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
     throw new RangeError("commandTimeoutMs must be positive and finite");
   }
   const active = new Map<string, ActivePi>();
-  if (
-    options.durableStore !== undefined &&
-    options.journal !== undefined &&
-    options.journal !== options.durableStore
-  ) {
-    throw new TypeError("durableStore is also the journal; do not pass both");
-  }
-  const journal =
-    options.durableStore ?? options.journal ?? createMemoryJournal(limits);
   let disposed = false;
 
   const execution: ExecutionPort<PiRunRequest> = {
@@ -617,15 +574,38 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
     },
   };
 
-  const service = createRunService<PiRunRequest, "pi">({
+  return {
+    identity: { name: "pi", version: options.piVersion },
+    capabilities: structuredClone(PI_CAPABILITIES) as HarnessCapabilities,
     execution,
     harness: createPiHarness(limits),
+    validateInput: validatePiInput,
+  };
+}
+
+/** Creates the Pi adapter over an injected execution owner. No direct spawn path exists here. */
+export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
+  const limits = { ...DEFAULT_LIMITS, ...options.limits };
+  if (
+    options.durableStore !== undefined &&
+    options.journal !== undefined &&
+    options.journal !== options.durableStore
+  ) {
+    throw new TypeError("durableStore is also the journal; do not pass both");
+  }
+  const adapter = createPiHarnessAdapter(options);
+  const journal =
+    options.durableStore ?? options.journal ?? createMemoryJournal(limits);
+  const service = createRunService<PiRunRequest, "pi">({
+    execution: adapter.execution,
+    harness: adapter.harness,
     journal,
     ...(options.durableStore === undefined
       ? {}
       : { durableStore: options.durableStore }),
     limits,
-    harnessIdentity: { name: "pi", version: options.piVersion },
+    harnessIdentity: adapter.identity,
+    capabilities: adapter.capabilities,
     validateInput: validatePiInput,
   });
   return {

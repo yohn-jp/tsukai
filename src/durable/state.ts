@@ -2,6 +2,7 @@ import type { DurableRunState } from "../contracts/durable.js";
 import type {
   Activity,
   ExecutionBinding,
+  HarnessName,
   Lifecycle,
   Outcome,
   PhysicalReceipt,
@@ -94,6 +95,10 @@ function bool(value: unknown, name: string): boolean {
   return value;
 }
 
+function isHarnessName(value: unknown): value is HarnessName {
+  return value === "mock" || value === "pi" || value === "claude-code";
+}
+
 function obj(value: unknown, name: string): Record<string, unknown> {
   if (!isRecord(value)) bad(`${name} must be an object`);
   return value;
@@ -112,6 +117,8 @@ function parseBinding(value: unknown): ExecutionBinding {
   if (piVersion !== undefined) binding.piVersion = piVersion;
   const piRevision = optStr(record, "piRevision", 128);
   if (piRevision !== undefined) binding.piRevision = piRevision;
+  const harnessVersion = optStr(record, "harnessVersion", 128);
+  if (harnessVersion !== undefined) binding.harnessVersion = harnessVersion;
   return binding;
 }
 
@@ -169,7 +176,7 @@ function parseRecovery(value: unknown): RunRecovery {
 function parseSnapshot(value: unknown): RunSnapshot {
   const record = obj(value, "snapshot");
   const harness = obj(record.harness, "snapshot.harness");
-  if (harness.name !== "mock" && harness.name !== "pi") {
+  if (!isHarnessName(harness.name)) {
     bad("snapshot.harness.name is invalid");
   }
   const metadataRecord = obj(record.metadata, "snapshot.metadata");

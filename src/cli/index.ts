@@ -17,9 +17,11 @@ Usage:
   tsukai replay <journal-path> [--json]
   tsukai observe --state-dir D [--json]
   tsukai owner serve --state-dir D --jinushi-state-dir D --pi-executable P
+                     [--claude-code-executable C]
   tsukai owner status --state-dir D
-  tsukai run create --state-dir D --cwd D [--parent ID] [--label L]  (prompt on stdin)
-  tsukai run get|result|cancel <id> --state-dir D
+  tsukai run create --state-dir D --cwd D [--harness pi|claude-code]
+                    [--parent ID] [--label L]  (prompt on stdin)
+  tsukai run get|result|cancel|capabilities <id> --state-dir D
   tsukai run wait <id> --state-dir D [--timeout-ms N]
   tsukai run list --state-dir D
   tsukai run grant|revoke <id> --state-dir D   (operator: agent credential for a run)

@@ -155,6 +155,9 @@ export function toSnapshot(run: RunRecord): RunSnapshot {
             ...(run.execution.piRevision === undefined
               ? {}
               : { piRevision: run.execution.piRevision }),
+            ...(run.execution.harnessVersion === undefined
+              ? {}
+              : { harnessVersion: run.execution.harnessVersion }),
           },
         }),
     ...(run.receipt === undefined

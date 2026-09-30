@@ -42,7 +42,9 @@
     "conformance": "pnpm run test:package && pnpm run certify:pi",
     "prepack": "pnpm run build",
     "certify:owner": "pnpm run build && node scripts/certify-owner.mjs",
-    "certify:agent": "pnpm run build && node scripts/certify-agent.mjs"
+    "certify:agent": "pnpm run build && node scripts/certify-agent.mjs",
+    "certify:harness": "pnpm run build && node scripts/certify-harness.mjs",
+    "test:harness": "vitest run test/harness test/claude-code --passWithNoTests"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.99.1",

@@ -66,6 +66,12 @@ Intent is persisted before any external start and the Jinushi execution binding 
 
 `agent_spawn/status/wait/result/cancel` (M3, see `docs/M3-AGENT.md`) are scoped projections over the same resident owner via `connectAgent`; `pnpm run certify:agent` is their live lane and reports ENVIRONMENT_BLOCKED under the same conditions.
 
+## Capability-aware harnesses (M5)
+
+One `RunService` can host several harness adapters: `createHarnessRuntime({ adapters: [createPiHarnessAdapter(...), createClaudeCodeHarnessAdapter(...)], durableStore })`. Each AgentRun stays bound to the adapter named by its harness identity for its whole life, including after owner restart; lifecycle, durability, controls, and observation projections are shared. `runs.capabilities(id)` returns the adapter's machine-readable `HarnessCapabilities`; `runs.steer`/`runs.followUp` are capability-checked and reject with `HarnessCapabilityError` (`HARNESS_CAPABILITY_UNSUPPORTED`) before anything reaches the harness. Harness-native evidence stays namespaced (`pi`, `claudeCode`), and projections attribute harness-sourced values to their harness; metrics a harness cannot report stay `unavailable`.
+
+The second real harness is the Claude Code CLI 2.1.285 in headless stream-json mode, executed through `createJinushiClaudeCodeExecutionPort` (Jinushi-owned, fixed argv, prompt over stdin). `tsukai owner serve ... --claude-code-executable C` registers it next to Pi. `pnpm run certify:harness` runs the shared contract against real Jinushi-owned Pi and Claude Code processes (credential-free). Details: [docs/M5-HARNESS.md](docs/M5-HARNESS.md).
+
 ## Recording and replay
 
 `tsukai demo` shows multiple mock runs, their events and results, and their relationship. `demo --json` writes one metadata observation envelope per LF-delimited line to stdout. Diagnostics go to stderr. `replay` validates an exported journal and reconstructs its public metadata projection without starting workers. Metadata replay cannot recover discarded result text. Histories and subscriptions have finite limits and expose incomplete history as gaps.
