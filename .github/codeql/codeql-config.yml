@@ -1,0 +1,6 @@
+name: tsukai CodeQL config
+
+paths-ignore:
+  - node_modules
+  - dist
+  - coverage
