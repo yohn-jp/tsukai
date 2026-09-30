@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { ExecutionObserver, HarnessSignal } from "../contracts/ports.js";
+import type {
+  ExecutionObserver,
+  HarnessSignal,
+  ResumeOutcome,
+} from "../contracts/ports.js";
+import { isObservationGap } from "../contracts/ports.js";
+import type { DurableRunState } from "../contracts/durable.js";
 import type { RuntimeLimits } from "../contracts/limits.js";
 import { DEFAULT_LIMITS } from "../contracts/limits.js";
 import {
@@ -13,7 +19,9 @@ import type {
   ObservationDraft,
   Page,
   PhysicalReceipt,
+  RecoveryGap,
   RunCreateInput,
+  RunRecovery,
   RunResult,
   RunSnapshot,
   WaitOptions,
@@ -23,7 +31,11 @@ import {
   UnsupportedBackendError,
   WaitTimeoutError,
 } from "../contracts/types.js";
-import type { RunService, RunServiceOptions } from "../contracts/service.js";
+import type {
+  ReconcileReport,
+  RunService,
+  RunServiceOptions,
+} from "../contracts/service.js";
 import {
   changeRun,
   toSnapshot,
@@ -40,6 +52,7 @@ const mockScenarios = new Set([
   "quiet",
   "hold",
 ]);
+const MAX_RECOVERY_GAPS = 16;
 const activities = new Set<Activity>([
   "output",
   "tool",
@@ -198,6 +211,10 @@ function validateInput(
   return normalized;
 }
 
+function isTerminal(run: RunRecord): boolean {
+  return run.lifecycle === "terminal";
+}
+
 function isSettled(run: RunRecord): boolean {
   return run.lifecycle === "terminal" || run.lifecycle === "uncertain";
 }
@@ -227,10 +244,18 @@ export function createRunService<
   Harness extends HarnessName = "mock",
 >(options: RunServiceOptions<Request, Harness>): RunService<Request, Harness> {
   const limits = resolveLimits(options.limits);
+  const store = options.durableStore;
+  if (store !== undefined && options.journal !== store) {
+    throw new TypeError(
+      "A durable store must also be the journal so observations persist before projection",
+    );
+  }
   const runs = new Map<string, RunRecord>();
   const order: string[] = [];
   let disposed = false;
   let disposePromise: Promise<void> | undefined;
+  let detachPromise: Promise<void> | undefined;
+  const reconciling = new Map<string, Promise<void>>();
 
   const requireRun = (agentRunId: string): RunRecord => {
     const run = runs.get(agentRunId);
@@ -242,7 +267,14 @@ export function createRunService<
     run: RunRecord,
     draft: Omit<ObservationDraft, "runId">,
   ): void => {
-    options.journal.append({ runId: run.agentRunId, ...draft });
+    try {
+      options.journal.append({ runId: run.agentRunId, ...draft });
+    } catch {
+      // A failed record is not a successful record: flag the run instead of
+      // letting an observer callback take the owner down.
+      run.persistFailed = true;
+      if (run.lifecycle !== "terminal") run.completeness = "incomplete";
+    }
   };
 
   const appendSnapshot = (run: RunRecord): void => {
@@ -257,15 +289,103 @@ export function createRunService<
     for (const wake of run.waiters) wake();
   };
 
+  const toDurable = (run: RunRecord): DurableRunState => ({
+    snapshot: toSnapshot(run),
+    ...(run.outcomeCandidate === undefined
+      ? {}
+      : {
+          // Reported assistant text is content and is never made durable.
+          candidate: {
+            outcome: run.outcomeCandidate.outcome,
+            semantic: run.outcomeCandidate.semantic,
+            reason: run.outcomeCandidate.reason,
+          },
+        }),
+    cancelIntentSeen: run.cancelIntentSeen,
+    cursor: { ...run.cursor },
+    intent: { startRequested: run.startRequested },
+    ...(run.dispatch === undefined ? {} : { dispatch: run.dispatch }),
+    retirementRequests: [...run.retirementRequests],
+    journalSeq: store?.journalHead(run.agentRunId).lastSeq ?? 0,
+  });
+
+  /** Strict commit: a failure propagates so the caller does not proceed. */
+  const persist = (run: RunRecord): void => {
+    if (store === undefined) return;
+    store.saveRun(toDurable(run));
+    run.persistFailed = false;
+  };
+
+  /**
+   * Commit from an observation callback. Durable state may then be behind
+   * memory, which restart reconciliation tolerates because it re-derives from
+   * backend evidence; the run is flagged incomplete instead of crashing.
+   */
+  const persistSafe = (run: RunRecord): void => {
+    try {
+      persist(run);
+    } catch {
+      run.persistFailed = true;
+      if (run.lifecycle !== "terminal") run.completeness = "incomplete";
+    }
+  };
+
   const update = (run: RunRecord, changes: RunChanges): boolean => {
     if (!changeRun(run, changes)) return false;
+    persistSafe(run);
     appendSnapshot(run);
     notify(run);
     return true;
   };
 
+  /** Commits before the caller may produce an externally visible effect. */
+  const updateStrict = (run: RunRecord, changes: RunChanges): boolean => {
+    if (!changeRun(run, changes)) return false;
+    persist(run);
+    appendSnapshot(run);
+    notify(run);
+    return true;
+  };
+
+  const freshRecovery = (run: RunRecord): RunRecovery =>
+    run.recovery ?? { state: "none", epoch: 0, attempts: 0, gaps: [] };
+
+  const withGap = (
+    recovery: RunRecovery,
+    gap: Omit<RecoveryGap, "detectedAt">,
+  ): RunRecovery => {
+    if (
+      recovery.gaps.some(
+        (known) => known.kind === gap.kind && known.code === gap.code,
+      )
+    ) {
+      return recovery;
+    }
+    const gaps = recovery.gaps.slice(0, MAX_RECOVERY_GAPS - 1);
+    gaps.push({ ...gap, detectedAt: new Date().toISOString() });
+    return { ...recovery, gaps };
+  };
+
+  /** Records lost evidence. Gaps only ever grow. */
+  const recordGap = (
+    run: RunRecord,
+    gap: Omit<RecoveryGap, "detectedAt">,
+  ): void => {
+    const next = withGap(freshRecovery(run), gap);
+    if (next === run.recovery) return;
+    append(run, {
+      source: "runtime",
+      kind: "run.gap",
+      payload: { kind: gap.kind, code: gap.code },
+    });
+    if (run.lifecycle === "terminal") return;
+    update(run, { recovery: next, completeness: "incomplete" });
+  };
+
   const markUncertain = (run: RunRecord, reason: string): void => {
     if (run.lifecycle === "terminal") return;
+    if (run.lifecycle === "uncertain" && run.recovery?.reason === reason)
+      return;
     append(run, {
       source: "execution",
       kind: "execution.uncertain",
@@ -276,9 +396,21 @@ export function createRunService<
       completeness: "incomplete",
       reason: run.outcomeCandidate?.reason ?? reason,
     };
+    if (run.recovery !== undefined) {
+      changes.recovery = { ...run.recovery, state: "uncertain", reason };
+    }
     if (run.outcomeCandidate === undefined) changes.semantic = "unknown";
     update(run, changes);
   };
+
+  const resolvedRecovery = (run: RunRecord): RunRecovery | undefined =>
+    run.recovery === undefined
+      ? undefined
+      : {
+          ...run.recovery,
+          state: "terminal",
+          reconciledAt: new Date().toISOString(),
+        };
 
   const finalizeFromReceipt = (run: RunRecord): void => {
     const receipt = run.receipt;
@@ -302,22 +434,51 @@ export function createRunService<
         changes.semantic = "unknown";
         changes.reason = "execution-status-uncertain";
       }
+      if (run.recovery !== undefined) {
+        changes.recovery = {
+          ...run.recovery,
+          state: "uncertain",
+          reason: "execution-status-uncertain",
+        };
+      }
       update(run, changes);
       return;
     }
 
     if (run.outcomeCandidate !== undefined) {
       const candidate = run.outcomeCandidate;
+      const recovery = resolvedRecovery(run);
       update(run, {
         lifecycle: "terminal",
         semantic: candidate.semantic,
         outcome: candidate.outcome,
         reason: candidate.reason,
         receipt: cloneReceipt(receipt),
+        ...(recovery === undefined ? {} : { recovery }),
       });
       return;
     }
 
+    if (run.recovery !== undefined && run.recovery.gaps.length > 0) {
+      // The process is physically gone but the evidence that would classify
+      // its work was lost. Keep the physical fact; do not guess a result.
+      update(run, {
+        lifecycle: "uncertain",
+        semantic: "unknown",
+        completeness: "incomplete",
+        reason: "physical-exit-with-observation-gap",
+        receipt: cloneReceipt(receipt),
+        recovery: {
+          ...run.recovery,
+          state: "uncertain",
+          reason: "physical-exit-with-observation-gap",
+          reconciledAt: new Date().toISOString(),
+        },
+      });
+      return;
+    }
+
+    const recovery = resolvedRecovery(run);
     update(run, {
       lifecycle: "terminal",
       semantic: "unknown",
@@ -325,6 +486,7 @@ export function createRunService<
       reason: "execution-exited-before-settlement",
       completeness: "incomplete",
       receipt: cloneReceipt(receipt),
+      ...(recovery === undefined ? {} : { recovery }),
     });
   };
 
@@ -341,9 +503,12 @@ export function createRunService<
       return;
     }
     run.retirementRequests.add(reason);
+    persistSafe(run);
     try {
       await options.execution.retire(binding.executionRunId, reason);
     } catch {
+      // An unattached (post-restart) run may retry once it is re-attached.
+      if (!run.attached) run.retirementRequests.delete(reason);
       markUncertain(run, "execution-retirement-unconfirmed");
     }
   };
@@ -378,19 +543,34 @@ export function createRunService<
       semantic: candidate.semantic,
       reason: candidate.reason,
     });
+    persistSafe(run); // candidate durable before any retirement request
     void requestRetirement(
       run,
       candidate.outcome === "cancelled" ? "cancel" : "settled",
     );
   };
 
-  const processSignals = (run: RunRecord, signals: HarnessSignal[]): void => {
+  const processSignals = (
+    run: RunRecord,
+    signals: HarnessSignal[],
+    identityBase?: string,
+  ): void => {
+    let index = 0;
     for (const signal of signals) {
       if (run.lifecycle === "terminal") return;
       if (signal.type === "observation") {
+        // Harness activity proves the prompt reached the harness.
+        if (run.dispatch !== undefined && run.dispatch !== "accepted") {
+          run.dispatch = "accepted";
+          persistSafe(run);
+        }
         append(run, {
           ...signal.draft,
           source: signal.draft.source ?? "harness",
+          ...(signal.draft.sourceIdentity === undefined &&
+          identityBase !== undefined
+            ? { sourceIdentity: `${identityBase}#${index++}` }
+            : {}),
         });
         const fromPayload = signal.draft.payload.activity;
         const activity =
@@ -432,10 +612,14 @@ export function createRunService<
     }
   };
 
-  const processOutput = (run: RunRecord, chunk: Uint8Array): void => {
+  const processOutput = (
+    run: RunRecord,
+    chunk: Uint8Array,
+    sourceIdentity?: string,
+  ): void => {
     if (run.lifecycle === "terminal" || run.decoderFinished) return;
     try {
-      processSignals(run, run.decoder.push(chunk));
+      processSignals(run, run.decoder.push(chunk), sourceIdentity);
     } catch {
       markUncertain(run, "harness-decoding-failed");
       void requestRetirement(run, "cancel");
@@ -486,7 +670,38 @@ export function createRunService<
   };
 
   const observerFor = (run: RunRecord): ExecutionObserver => ({
-    onOutput: (chunk) => processOutput(run, chunk),
+    onEstablished: async (binding) => {
+      if (run.lifecycle === "terminal" || run.execution !== undefined) return;
+      // The binding is durable before the adapter may submit the prompt.
+      updateStrict(run, { execution: { ...binding } });
+    },
+    onOutput: (chunk, sourceIdentity) =>
+      processOutput(run, chunk, sourceIdentity),
+    onReplay: (chunk) => {
+      if (run.lifecycle === "terminal" || run.decoderFinished) return;
+      try {
+        // Rebuild decoder state only. These bytes were settled before the
+        // cursor advanced, so derived signals are not re-applied.
+        const signals = run.decoder.push(chunk);
+        if (
+          signals.some((signal) => signal.type === "observation") &&
+          run.dispatch !== undefined &&
+          run.dispatch !== "accepted"
+        ) {
+          run.dispatch = "accepted";
+          persistSafe(run);
+        }
+      } catch {
+        markUncertain(run, "harness-replay-failed");
+      }
+    },
+    onDispatch: (phase) => {
+      if (run.dispatch === phase || run.dispatch === "accepted") return;
+      run.dispatch = phase;
+      if (phase === "requested")
+        persist(run); // durable before the write
+      else persistSafe(run);
+    },
     onSignal: (signal) => processSignals(run, [signal]),
     onBindingUpdate: (binding) => {
       if (run.lifecycle === "terminal") return;
@@ -500,14 +715,46 @@ export function createRunService<
       }
       update(run, { execution: { ...binding } });
     },
+    onProgress: (cursor) => {
+      const next = {
+        eventSeq: Math.max(run.cursor.eventSeq, cursor.eventSeq),
+        stdoutOffset: Math.max(run.cursor.stdoutOffset, cursor.stdoutOffset),
+        stderrOffset: Math.max(run.cursor.stderrOffset, cursor.stderrOffset),
+      };
+      if (
+        next.eventSeq === run.cursor.eventSeq &&
+        next.stdoutOffset === run.cursor.stdoutOffset &&
+        next.stderrOffset === run.cursor.stderrOffset
+      ) {
+        return;
+      }
+      run.cursor = next;
+      persistSafe(run);
+    },
     onExit: (receipt) => processExit(run, receipt),
-    onError: (_error) => {
+    onError: (error) => {
       if (run.lifecycle === "terminal") return;
-      append(run, {
-        source: "execution",
-        kind: "execution.error",
-        payload: { category: "transport" },
-      });
+      // This observation is dead; a later reconcile may attach a new one.
+      run.attached = false;
+      if (!(
+        run.lifecycle === "uncertain" &&
+        run.recovery?.reason === "execution-observation-lost"
+      )) {
+        append(run, {
+          source: "execution",
+          kind: "execution.error",
+          payload: { category: "transport" },
+        });
+      }
+      if (isObservationGap(error)) {
+        recordGap(run, {
+          kind: error.gapKind,
+          code:
+            typeof (error as { code?: unknown }).code === "string"
+              ? (error as unknown as { code: string }).code
+              : "observation-gap",
+        });
+      }
       markUncertain(run, "execution-observation-lost");
     },
   });
@@ -550,6 +797,254 @@ export function createRunService<
       ...(nextCursor === undefined ? {} : { nextCursor }),
     };
   };
+
+  const restoreRun = (state: DurableRunState): RunRecord => {
+    const snapshot = state.snapshot;
+    const run: RunRecord = {
+      agentRunId: snapshot.agentRunId,
+      harness: { ...snapshot.harness },
+      ...(snapshot.parentRunId === undefined
+        ? {}
+        : { parentRunId: snapshot.parentRunId }),
+      metadata: { ...snapshot.metadata },
+      ...(snapshot.workspace === undefined
+        ? {}
+        : { workspace: { ...snapshot.workspace } }),
+      lifecycle: snapshot.lifecycle,
+      semantic: snapshot.semantic,
+      activity: snapshot.activity,
+      revision: snapshot.revision,
+      createdAt: snapshot.createdAt,
+      updatedAt: snapshot.updatedAt,
+      ...(snapshot.execution === undefined
+        ? {}
+        : { execution: { ...snapshot.execution } }),
+      ...(snapshot.receipt === undefined
+        ? {}
+        : { receipt: cloneReceipt(snapshot.receipt) }),
+      ...(snapshot.outcome === undefined ? {} : { outcome: snapshot.outcome }),
+      ...(snapshot.reason === undefined ? {} : { reason: snapshot.reason }),
+      completeness: snapshot.completeness,
+      ...(snapshot.recovery === undefined
+        ? {}
+        : {
+            recovery: {
+              ...snapshot.recovery,
+              gaps: snapshot.recovery.gaps.map((gap) => ({ ...gap })),
+            },
+          }),
+      decoder: options.harness.decoder(),
+      waiters: new Set(),
+      ...(state.candidate === undefined
+        ? {}
+        : { outcomeCandidate: { ...state.candidate } }),
+      retirementRequests: new Set(),
+      cancelIntentSeen: state.cancelIntentSeen,
+      decoderFinished: false,
+      cursor: { ...state.cursor },
+      startRequested: state.intent.startRequested,
+      ...(state.dispatch === undefined ? {} : { dispatch: state.dispatch }),
+      attached: false,
+      persistFailed: false,
+    };
+    return run;
+  };
+
+  /**
+   * Loads durable runs before any client can observe them. Classification here
+   * uses only durable facts; it never contacts a backend, starts work, or
+   * sends a prompt.
+   */
+  const loadDurableRuns = (): void => {
+    if (store === undefined) return;
+    const persisted = store.loadRuns();
+    if (persisted.length > limits.maxRuns) {
+      // Never drop durable runs silently to fit an in-memory bound.
+      throw new RangeError(
+        `Durable store holds ${persisted.length} runs, above the maxRuns limit of ${limits.maxRuns}`,
+      );
+    }
+    for (const state of persisted) {
+      const run = restoreRun(state);
+      runs.set(run.agentRunId, run);
+      order.push(run.agentRunId);
+      const head = store.journalHead(run.agentRunId);
+      const journalLost = head.truncated || head.lastSeq < state.journalSeq;
+      if (run.lifecycle === "terminal") {
+        if (journalLost) {
+          run.recovery = withGap(freshRecovery(run), {
+            kind: "journal",
+            code: head.truncated
+              ? "journal-tail-discarded"
+              : "journal-behind-state",
+          });
+          run.completeness = "incomplete";
+          persistSafe(run);
+        }
+        continue;
+      }
+      const previous = run.lifecycle;
+      let recovery: RunRecovery = {
+        ...freshRecovery(run),
+        epoch: (run.recovery?.epoch ?? 0) + 1,
+        state: "pending",
+      };
+      delete recovery.reason;
+      if (journalLost) {
+        recovery = withGap(recovery, {
+          kind: "journal",
+          code: head.truncated
+            ? "journal-tail-discarded"
+            : "journal-behind-state",
+        });
+      }
+      let action: string;
+      const changes: RunChanges = {
+        recovery,
+        ...(journalLost ? { completeness: "incomplete" as const } : {}),
+      };
+      if (!run.startRequested && run.execution === undefined) {
+        // Intent was never durable, so no external start can have happened.
+        action = "never-started";
+        changes.lifecycle = "terminal";
+        changes.semantic = "failed";
+        changes.outcome = "failed";
+        changes.reason = "owner-restarted-before-start";
+        changes.recovery = {
+          ...recovery,
+          state: "terminal",
+          reconciledAt: new Date().toISOString(),
+        };
+      } else if (run.execution === undefined) {
+        // Start may or may not have reached the backend. Never retry blindly.
+        action = "start-unconfirmed";
+        changes.lifecycle = "uncertain";
+        changes.completeness = "incomplete";
+        if (run.outcomeCandidate === undefined) changes.semantic = "unknown";
+        changes.reason = "execution-start-unconfirmed-after-restart";
+        changes.recovery = {
+          ...recovery,
+          state: "uncertain",
+          reason: "execution-start-unconfirmed-after-restart",
+        };
+      } else {
+        action = "reconcile";
+        changes.lifecycle = "reconciling";
+      }
+      // Commit the classification, then journal it. Replaying load is safe:
+      // a repeated load classifies the same durable facts the same way.
+      changeRun(run, changes);
+      persistSafe(run);
+      append(run, {
+        source: "runtime",
+        kind: "run.recovered",
+        payload: { epoch: recovery.epoch, previous, action },
+      });
+      appendSnapshot(run);
+    }
+  };
+
+  const reconcileRun = (run: RunRecord): Promise<void> => {
+    const inflight = reconciling.get(run.agentRunId);
+    if (inflight !== undefined) return inflight;
+    const task = (async (): Promise<void> => {
+      const binding = run.execution;
+      if (
+        binding === undefined ||
+        run.lifecycle === "terminal" ||
+        run.attached ||
+        disposed ||
+        detachPromise !== undefined
+      ) {
+        return;
+      }
+      if (options.execution.resume === undefined) {
+        markUncertain(run, "execution-resume-unsupported");
+        return;
+      }
+      const base = freshRecovery(run);
+      update(run, {
+        ...(run.lifecycle === "reconciling"
+          ? {}
+          : { lifecycle: "reconciling" as const }),
+        recovery: {
+          ...base,
+          state: "reconciling",
+          attempts: base.attempts + 1,
+        },
+      });
+      let outcome: ResumeOutcome;
+      try {
+        outcome = await options.execution.resume(
+          { ...binding },
+          observerFor(run),
+          { ...run.cursor },
+        );
+      } catch {
+        outcome = { status: "ambiguous", reason: "backend-resume-failed" };
+      }
+      if (isTerminal(run)) return;
+      if (outcome.status === "attached") {
+        run.attached = true;
+        if (run.outcomeCandidate !== undefined && run.receipt === undefined) {
+          // Finish the persisted decision; closing input is idempotent and
+          // physical retirement does not depend on lost observation history.
+          run.retirementRequests.clear();
+          void requestRetirement(
+            run,
+            run.outcomeCandidate.outcome === "cancelled" ? "cancel" : "settled",
+          );
+        }
+        if (
+          outcome.physical === "terminal" &&
+          run.lifecycle === "reconciling" &&
+          run.receipt === undefined
+        ) {
+          // Terminal was reported but no receipt reached the owner.
+          markUncertain(run, "execution-terminal-without-receipt");
+          return;
+        }
+        // A gap can leave the decoder without the evidence to classify.
+        if (run.lifecycle === "uncertain" && run.recovery?.gaps.length) return;
+        if (
+          outcome.physical === "running" &&
+          run.lifecycle !== "uncertain" &&
+          run.dispatch !== "accepted" &&
+          run.outcomeCandidate === undefined
+        ) {
+          markUncertain(
+            run,
+            run.dispatch === "requested"
+              ? "prompt-delivery-unconfirmed"
+              : "prompt-not-dispatched",
+          );
+          return;
+        }
+        if (outcome.physical === "running" && run.lifecycle !== "uncertain") {
+          update(run, {
+            lifecycle:
+              run.outcomeCandidate === undefined ? "running" : "stopping",
+            recovery: {
+              ...freshRecovery(run),
+              state: "attached",
+              reconciledAt: new Date().toISOString(),
+            },
+          });
+        }
+        return;
+      }
+      markUncertain(
+        run,
+        outcome.status === "missing"
+          ? "execution-missing-from-backend"
+          : outcome.reason,
+      );
+    })().finally(() => reconciling.delete(run.agentRunId));
+    reconciling.set(run.agentRunId, task);
+    return task;
+  };
+
+  loadDurableRuns();
 
   const service: RunService<Request, Harness> = {
     runs: {
@@ -607,11 +1102,25 @@ export function createRunService<
           retirementRequests: new Set(),
           cancelIntentSeen: false,
           decoderFinished: false,
+          cursor: { eventSeq: 0, stdoutOffset: 0, stderrOffset: 0 },
+          startRequested: false,
+          attached: false,
+          persistFailed: false,
         };
+        // Identity first, then intent: nothing external can exist before both
+        // are durable, so a crash before the start request leaves no orphan.
+        persist(run);
         runs.set(agentRunId, run);
         order.push(agentRunId);
         appendSnapshot(run);
-        update(run, { lifecycle: "starting" });
+        try {
+          run.startRequested = true;
+          updateStrict(run, { lifecycle: "starting" });
+        } catch (error) {
+          runs.delete(agentRunId);
+          order.pop();
+          throw error;
+        }
 
         try {
           const binding = await options.execution.start(
@@ -636,7 +1145,10 @@ export function createRunService<
             markUncertain(run, "execution-binding-mismatch");
             return toSnapshot(run);
           }
-          update(run, { execution: { ...nextBinding } });
+          // Acknowledge only after the binding is durable (an adapter that
+          // supports onEstablished has already committed it before any prompt).
+          updateStrict(run, { execution: { ...nextBinding } });
+          run.attached = true;
           if (pendingReceipt !== undefined) {
             delete run.pendingReceipt;
             run.receipt = cloneReceipt(pendingReceipt);
@@ -726,6 +1238,7 @@ export function createRunService<
 
         if (!run.cancelIntentSeen) {
           run.cancelIntentSeen = true;
+          persistSafe(run);
           append(run, {
             source: "runtime",
             kind: "run.cancel.requested",
@@ -747,6 +1260,10 @@ export function createRunService<
             semantic: "aborted",
             reason: "user-cancelled",
           });
+          persistSafe(run);
+        }
+        if (run.execution !== undefined && !run.attached) {
+          await reconcileRun(run);
         }
         await requestRetirement(run, "cancel");
         return toSnapshot(run);
@@ -779,6 +1296,35 @@ export function createRunService<
             : { receipt: cloneReceipt(run.receipt) }),
         };
       },
+    },
+    reconcile: async () => {
+      const targets = order
+        .map((agentRunId) => requireRun(agentRunId))
+        .filter(
+          (run) =>
+            run.lifecycle !== "terminal" &&
+            run.execution !== undefined &&
+            !run.attached,
+        );
+      const before = new Map(
+        targets.map((run) => [run.agentRunId, run.lifecycle]),
+      );
+      await Promise.all(targets.map((run) => reconcileRun(run)));
+      return {
+        runs: targets.map((run) => ({
+          agentRunId: run.agentRunId,
+          before: before.get(run.agentRunId)!,
+          after: run.lifecycle,
+          recovery: run.recovery?.state ?? "none",
+        })),
+      };
+    },
+    detach: () => {
+      if (detachPromise !== undefined) return detachPromise;
+      detachPromise = Promise.resolve()
+        .then(() => options.execution.detach?.())
+        .finally(() => options.journal.close());
+      return detachPromise;
     },
     dispose: () => {
       if (disposePromise !== undefined) return disposePromise;

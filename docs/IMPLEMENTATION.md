@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-Status: M0, M1a, and M1b are complete. M1b was re-certified by Issue #12 against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` and the published Pi 0.99.1 artifact (evidence in [M1B-JINUSHI.md](M1B-JINUSHI.md)); provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local credentials. M2 (resident ownership, #13) is not started; PR #7 only established durability/recovery seams. M1a's supported Pi is the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
+Status: M0, M1a, and M1b are complete. M1b was re-certified by Issue #12 against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` and the published Pi 0.99.1 artifact (evidence in [M1B-JINUSHI.md](M1B-JINUSHI.md)); provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local credentials. M2 (resident ownership, #13) is implemented on its PR branch (see [M2-OWNER.md](M2-OWNER.md)); PR #7 had only established durability/recovery seams. M3 and later are not started. M1a's supported Pi is the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
 
 ## Baseline
 
@@ -14,7 +14,7 @@ M0 did **not** certify live Pi, Jinushi, durable ownership, parent-agent tools, 
 | --- | --- | --- |
 | M1a | Pi RPC protocol integration and live transport certification | Tsukai can drive and observe a separately executed Pi RPC process through an injected execution/transport boundary; direct spawn exists only as explicit certification/test infrastructure |
 | M1b (complete) | Jinushi production execution adapter | Production AgentRuns launch/retire Pi through current accepted Jinushi contracts and preserve physical/semantic evidence separation |
-| M2 | Resident local owner and durability | Cross-client local IPC, durable registry/journal, restart reconciliation, explicit uncertainty and event gaps |
+| M2 (implemented, #13) | Resident local owner and durability | Cross-client local IPC, durable registry/journal, restart reconciliation, explicit uncertainty and event gaps |
 | M3 | Agent-facing control surface | Scoped `agent_spawn/status/wait/result/cancel`, parent/child runs, independent child execution |
 | M4 | Operator observability | Fleet/tree/timeline/resource/usage projections and replay/profile UI consumers |
 | M5 | Multi-harness adapters | Additional harnesses behind capability-aware adapters without degrading Pi-native observations to a lowest-common-denominator model |

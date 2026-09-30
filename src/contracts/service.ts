@@ -31,11 +31,29 @@ export interface RunOperations<
   result(agentRunId: string): RunResult;
 }
 
+export interface ReconcileReport {
+  runs: {
+    agentRunId: string;
+    before: RunSnapshot["lifecycle"];
+    after: RunSnapshot["lifecycle"];
+    recovery: NonNullable<RunSnapshot["recovery"]>["state"];
+  }[];
+}
+
 export interface RunService<
   Request = RunCreateInput["request"],
   Harness extends HarnessName = "mock",
 > {
   runs: RunOperations<Request, Harness>;
+  /**
+   * Reconciles every persisted non-terminal run against backend evidence by
+   * stable identity and cursor. Idempotent; never starts an execution or
+   * resends a prompt. Without a durable store it is a no-op.
+   */
+  reconcile(): Promise<ReconcileReport>;
+  /** Stops observing and closes stores but leaves physical executions running. */
+  detach(): Promise<void>;
+  /** Retires every owned execution (cancel) and closes stores. */
   dispose(): Promise<void>;
 }
 

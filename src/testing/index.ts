@@ -18,11 +18,14 @@ export function createMockRuntime(): MockRuntime {
 
   return {
     runs: service.runs,
+    reconcile: () => service.reconcile(),
+    detach: () => service.detach(),
     dispose: () => service.dispose(),
     release: (agentRunId) => execution.release(agentRunId),
     journal,
   };
 }
 
+export { createMockExecutionPort } from "../adapters/mock/execution.js";
 export { createPiCertificationExecutionPort } from "./pi/execution.js";
 export type { PiCertificationExecutionPortOptions } from "./pi/execution.js";
