@@ -72,6 +72,10 @@ One `RunService` can host several harness adapters: `createHarnessRuntime({ adap
 
 The second real harness is the Claude Code CLI 2.1.285 in headless stream-json mode, executed through `createJinushiClaudeCodeExecutionPort` (Jinushi-owned, fixed argv, prompt over stdin). `tsukai owner serve ... --claude-code-executable C` registers it next to Pi. `pnpm run certify:harness` runs the shared contract against real Jinushi-owned Pi and Claude Code processes (credential-free). Details: [docs/M5-HARNESS.md](docs/M5-HARNESS.md).
 
+## Admitted execution profiles (M5.5)
+
+A caller can configure a real coding-agent run without argv or process authority: `runs.create({ harness: "pi", request, workspace, executionProfile: { schemaVersion: 1, provider, model, tools: [{ source: "builtin", name: "read" }, { source: "extension", extension: "guard", name: "my_tool" }], extensions: [{ id: "guard", path, sha256 }] } })`. The adapter's `capabilities.executionProfile` says which dimensions it configures (Pi: provider with model, exact model, tools, extensions; Claude Code: model only). Unsupported or malformed profiles fail with `ExecutionProfileError` before Jinushi starts anything. The effective profile (with a fingerprint; extension paths omitted) is immutable, persisted, journaled, and returned in snapshots; restart never changes it. Without a profile, runs keep default deny (no tools, no extensions). `pnpm run certify:profile` certifies a tool-enabled governed Pi run through the resident owner and a real Jinushi supervisor. Details: [docs/M5.5-PROFILE.md](docs/M5.5-PROFILE.md).
+
 ## Recording and replay
 
 `tsukai demo` shows multiple mock runs, their events and results, and their relationship. `demo --json` writes one metadata observation envelope per LF-delimited line to stdout. Diagnostics go to stderr. `replay` validates an exported journal and reconstructs its public metadata projection without starting workers. Metadata replay cannot recover discarded result text. Histories and subscriptions have finite limits and expose incomplete history as gaps.

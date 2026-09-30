@@ -14,6 +14,8 @@ export type OwnerErrorCode =
   | "OWNER_BUSY"
   | "OWNER_UNAVAILABLE"
   | "HARNESS_CAPABILITY_UNSUPPORTED"
+  | "EXECUTION_PROFILE_INVALID"
+  | "EXECUTION_PROFILE_UNSUPPORTED"
   | "INTERNAL";
 
 export class OwnerError extends Error {

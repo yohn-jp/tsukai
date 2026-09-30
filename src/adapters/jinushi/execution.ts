@@ -15,6 +15,11 @@ import type {
   JinushiRun,
   JinushiRunSpec,
 } from "./contract.js";
+import type { AdmittedExecutionProfile } from "../../contracts/profile.js";
+import type { HarnessName } from "../../contracts/types.js";
+import { verifyExtensionFile } from "../profile.js";
+import { projectPiExecutionProfile } from "../pi/profile.js";
+import { projectClaudeCodeExecutionProfile } from "../claude-code/profile.js";
 
 const PI_RPC_ARGS = [
   "--mode",
@@ -1119,7 +1124,12 @@ class JinushiPiExecution implements PiDuplexExecution {
 export function createJinushiPiExecutionPort(
   options: JinushiPiExecutionPortOptions,
 ): PiDuplexExecutionPort {
-  return createJinushiDuplexExecutionPort(options, PI_RPC_ARGS);
+  return createJinushiDuplexExecutionPort(
+    options,
+    PI_RPC_ARGS,
+    "pi",
+    projectPiExecutionProfile,
+  );
 }
 
 export type JinushiClaudeCodeExecutionPortOptions =
@@ -1132,12 +1142,24 @@ export type JinushiClaudeCodeExecutionPortOptions =
 export function createJinushiClaudeCodeExecutionPort(
   options: JinushiClaudeCodeExecutionPortOptions,
 ): DuplexExecutionPort {
-  return createJinushiDuplexExecutionPort(options, CLAUDE_CODE_ARGS);
+  return createJinushiDuplexExecutionPort(
+    options,
+    CLAUDE_CODE_ARGS,
+    "claude-code",
+    projectClaudeCodeExecutionProfile,
+  );
 }
 
+/**
+ * The submitted argv is the fixed default-deny harness arguments plus the
+ * adapter's deterministic projection of an admitted execution profile. No
+ * caller-supplied argv, environment, or cwd enters through the profile.
+ */
 function createJinushiDuplexExecutionPort(
   options: JinushiPiExecutionPortOptions,
   harnessArgs: readonly string[],
+  harness: HarnessName,
+  projectProfile: (profile: AdmittedExecutionProfile | undefined) => string[],
 ): PiDuplexExecutionPort {
   const executable = validateAbsolutePath(
     options.executable,
@@ -1203,10 +1225,12 @@ function createJinushiDuplexExecutionPort(
   };
 
   return {
+    executionProfile: "projected",
     async open(
       agentRunId: string,
       observer: PiTransportObserver,
       workspace?: { cwd: string; workspaceSessionId?: string },
+      profile?: AdmittedExecutionProfile,
     ): Promise<PiDuplexExecution> {
       if (disposed) {
         throw new JinushiExecutionError(
@@ -1235,9 +1259,14 @@ function createJinushiDuplexExecutionPort(
           "workspaceSessionId must be non-empty when supplied",
         );
       }
+      // Admitted extension content is re-verified immediately before the
+      // Run is submitted; a changed file never reaches the harness.
+      for (const extension of profile?.extensions ?? [])
+        verifyExtensionFile(harness, extension);
+      const profileArgs = projectProfile(profile);
       const backend = await capabilities();
       const spec: JinushiRunSpec = {
-        argv: [executable, ...harnessArgs],
+        argv: [executable, ...harnessArgs, ...profileArgs],
         cwd,
         environment: {
           mode: environment.mode,

@@ -57,6 +57,8 @@ export class FakeSupervisor {
   claudeHoldBeforeInit = false;
   /** Pi records emitted after a started prompt; default is a settled success. */
   piTranscript: ((run: FakeRun) => object[]) | undefined;
+  /** Model Pi reports in `get_state` (absent: no model field, as before). */
+  piModel: { provider: string; id: string } | undefined;
   /** Every Run specification Jinushi was asked to start. */
   readonly specs: JinushiRunSpec[] = [];
   private sequence = 0;
@@ -272,7 +274,10 @@ export class FakeSupervisor {
           type: "response",
           command: "get_state",
           success: true,
-          data: { sessionId: `pi-session-${run.runId}` },
+          data: {
+            sessionId: `pi-session-${run.runId}`,
+            ...(this.piModel === undefined ? {} : { model: this.piModel }),
+          },
         });
       } else if (command.type === "prompt") {
         this.prompts += 1;

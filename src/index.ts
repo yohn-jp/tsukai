@@ -5,6 +5,24 @@ export type * from "./contracts/ports.js";
 export type * from "./contracts/service.js";
 export type * from "./contracts/durable.js";
 export { HarnessCapabilityError } from "./contracts/harness.js";
+export {
+  EXECUTION_PROFILE_SCHEMA_VERSION,
+  ExecutionProfileError,
+} from "./contracts/profile.js";
+export type {
+  AdmittedExecutionProfile,
+  EffectiveExecutionProfile,
+  ExecutionProfile,
+  ExecutionProfileBuiltinTool,
+  ExecutionProfileCapabilities,
+  ExecutionProfileDimension,
+  ExecutionProfileErrorCode,
+  ExecutionProfileExtension,
+  ExecutionProfileExtensionTool,
+  ExecutionProfileSupport,
+  ExecutionProfileTool,
+} from "./contracts/profile.js";
+export { executionProfileFingerprint } from "./domain/execution-profile.js";
 export type {
   DuplexAttachResult,
   DuplexExecution,
@@ -23,6 +41,8 @@ export {
   createPiHarnessAdapter,
   createPiRuntime,
   PI_CAPABILITIES,
+  PI_BUILTIN_TOOLS,
+  PI_EXECUTION_PROFILE_CAPABILITIES,
   SUPPORTED_PI_VERSION,
   SUPPORTED_PI_REVISION,
 } from "./adapters/pi/index.js";
@@ -33,6 +53,7 @@ export type {
 } from "./adapters/pi/index.js";
 export {
   CLAUDE_CODE_CAPABILITIES,
+  CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES,
   createClaudeCodeHarnessAdapter,
   createClaudeCodeRuntime,
   SUPPORTED_CLAUDE_CODE_VERSION,

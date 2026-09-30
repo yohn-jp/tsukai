@@ -1,4 +1,5 @@
 import type { PhysicalReceipt, RunCreateInput } from "./types.js";
+import type { AdmittedExecutionProfile } from "./profile.js";
 
 export interface PiRunRequest {
   prompt: string;
@@ -41,10 +42,17 @@ export type PiAttachResult =
   | { status: "ambiguous"; reason: string };
 
 export interface PiDuplexExecutionPort {
+  /**
+   * `projected`: the port realizes an admitted execution profile in the
+   * harness invocation it submits. Without it, adapters advertise every
+   * profile dimension as unsupported and reject profiled runs.
+   */
+  readonly executionProfile?: "projected";
   open(
     agentRunId: string,
     observer: PiTransportObserver,
     workspace?: { cwd: string; workspaceSessionId?: string },
+    profile?: AdmittedExecutionProfile,
   ): Promise<PiDuplexExecution>;
   /**
    * Re-attach to an existing execution. Stdout is re-delivered from offset 0 so

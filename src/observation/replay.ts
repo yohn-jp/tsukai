@@ -9,6 +9,7 @@ import type {
   SemanticState,
 } from "../contracts/types.js";
 import { JournalValidationError } from "./errors.js";
+import { parseEffectiveExecutionProfile } from "../domain/execution-profile.js";
 import { resolveLimits } from "./limits.js";
 import { isRecord, jsonObject, utf8Bytes } from "./json.js";
 
@@ -69,6 +70,7 @@ const OUTCOMES = new Set<Outcome>([
 ]);
 const SOURCE_NAMES = new Set(["runtime", "harness", "execution"]);
 const SNAPSHOT_KEYS = new Set([
+  "executionProfile",
   "agentRunId",
   "parentRunId",
   "spawnedBy",
@@ -267,6 +269,19 @@ function validateSnapshot(
     if (workspaceSessionId !== undefined)
       workspace.workspaceSessionId = workspaceSessionId;
     result.workspace = workspace;
+  }
+
+  if (value.executionProfile !== undefined) {
+    try {
+      result.executionProfile = parseEffectiveExecutionProfile(
+        value.executionProfile,
+        true,
+      );
+    } catch (error) {
+      return invalid(
+        `run.snapshot ${error instanceof Error ? error.message : "executionProfile is invalid"}`,
+      );
+    }
   }
 
   if (value.execution !== undefined) {

@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { admitExecutionProfile } from "../adapters/profile.js";
+import {
+  cloneEffectiveProfile,
+  persistedProfileProblem,
+} from "../domain/execution-profile.js";
+import type { AdmittedExecutionProfile } from "../contracts/profile.js";
 import type {
   ExecutionObserver,
   ExecutionPort,
@@ -956,6 +962,11 @@ export function createRunService<
       ...(snapshot.workspace === undefined
         ? {}
         : { workspace: { ...snapshot.workspace } }),
+      ...(snapshot.executionProfile === undefined
+        ? {}
+        : {
+            executionProfile: cloneEffectiveProfile(snapshot.executionProfile),
+          }),
       lifecycle: snapshot.lifecycle,
       semantic: snapshot.semantic,
       activity: snapshot.activity,
@@ -1116,6 +1127,18 @@ export function createRunService<
         markUncertain(run, adapterGapReason(run));
         return;
       }
+      if (run.executionProfile !== undefined) {
+        // Never re-attach under different semantics: the persisted profile
+        // must be intact and still configurable by the registered adapter.
+        const problem = persistedProfileProblem(
+          run.executionProfile,
+          adapter.capabilities?.executionProfile,
+        );
+        if (problem !== undefined) {
+          markUncertain(run, problem);
+          return;
+        }
+      }
       if (adapter.execution.resume === undefined) {
         markUncertain(run, "execution-resume-unsupported");
         return;
@@ -1251,6 +1274,19 @@ export function createRunService<
               )
             : validateInput(input as RunCreateInput, limits)
         ) as RunCreateInput<Request, Harness>;
+        // The profile is validated against the selected adapter's advertised
+        // configurability before anything is persisted or started. An
+        // adapter without profile support rejects it; it is never ignored.
+        const profileInput = (input as { executionProfile?: unknown })
+          .executionProfile;
+        const profile: AdmittedExecutionProfile | undefined =
+          profileInput === undefined
+            ? undefined
+            : admitExecutionProfile(
+                profileInput,
+                adapter.identity.name,
+                adapter.capabilities?.executionProfile,
+              );
         if (runs.size >= limits.maxRuns)
           throw new RangeError("Maximum retained run count reached");
         if (validated.parentRunId !== undefined) {
@@ -1285,6 +1321,9 @@ export function createRunService<
                       }),
                 },
               }),
+          ...(profile === undefined
+            ? {}
+            : { executionProfile: cloneEffectiveProfile(profile.effective) }),
           lifecycle: "accepted",
           semantic: "pending",
           activity: "unknown",
@@ -1323,6 +1362,7 @@ export function createRunService<
             validated.request,
             observerFor(run),
             validated.workspace,
+            profile,
           );
           const pendingReceipt = run.pendingReceipt;
           if (

@@ -17,6 +17,7 @@ import {
   WaitTimeoutError,
 } from "../contracts/types.js";
 import { HarnessCapabilityError } from "../contracts/harness.js";
+import { ExecutionProfileError } from "../contracts/profile.js";
 import { createFileDurableStore } from "../durable/file-store.js";
 import {
   AGENT_OPERATIONS,
@@ -100,6 +101,10 @@ function classify(error: unknown): { code: OwnerErrorCode; message: string } {
   }
   if (error instanceof HarnessCapabilityError) {
     return { code: "HARNESS_CAPABILITY_UNSUPPORTED", message: error.message };
+  }
+  if (error instanceof ExecutionProfileError) {
+    // Messages name the dimension and extension id, never a path.
+    return { code: error.code, message: error.message };
   }
   if (error instanceof WaitTimeoutError) {
     return { code: "WAIT_TIMEOUT", message: error.message };

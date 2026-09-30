@@ -10,6 +10,8 @@ import type {
   RunSnapshot,
   SemanticState,
 } from "../contracts/types.js";
+import type { EffectiveExecutionProfile } from "../contracts/profile.js";
+import { cloneEffectiveProfile } from "../domain/execution-profile.js";
 
 export interface OutcomeCandidate {
   outcome: Outcome;
@@ -25,6 +27,8 @@ export interface RunRecord {
   spawnedBy?: string;
   metadata: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };
+  /** Immutable after creation; never re-derived from a different adapter. */
+  readonly executionProfile?: EffectiveExecutionProfile;
   lifecycle: Lifecycle;
   semantic: SemanticState;
   activity: Activity;
@@ -131,6 +135,9 @@ export function toSnapshot(run: RunRecord): RunSnapshot {
               : { workspaceSessionId: run.workspace.workspaceSessionId }),
           },
         }),
+    ...(run.executionProfile === undefined
+      ? {}
+      : { executionProfile: cloneEffectiveProfile(run.executionProfile) }),
     lifecycle: run.lifecycle,
     semantic: run.semantic,
     activity: run.activity,
