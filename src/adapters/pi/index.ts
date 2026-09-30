@@ -340,6 +340,7 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
             draft: {
               source: "harness",
               kind: "harness.session",
+              sourceIdentity: "pi:session",
               payload: {
                 sessionId,
                 piVersion: options.piVersion,
@@ -380,6 +381,7 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
             draft: {
               source: "harness",
               kind: "harness.prompt_accepted",
+              sourceIdentity: "pi:prompt_accepted",
               payload: { disposition: "started" },
             },
           });
@@ -531,6 +533,15 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
               : undefined;
           if (record.success === true && disposition === "started") {
             observer.onDispatch?.("accepted");
+            observer.onSignal?.({
+              type: "observation",
+              draft: {
+                source: "harness",
+                kind: "harness.prompt_accepted",
+                sourceIdentity: "pi:prompt_accepted",
+                payload: { disposition: "started" },
+              },
+            });
           } else {
             observer.onSignal?.({
               type: "settlement",

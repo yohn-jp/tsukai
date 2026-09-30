@@ -40,7 +40,8 @@
     "certify:pi": "pnpm run build && node scripts/certify-pi.mjs",
     "certify:jinushi": "pnpm run build && node scripts/certify-jinushi.mjs",
     "conformance": "pnpm run test:package && pnpm run certify:pi",
-    "prepack": "pnpm run build"
+    "prepack": "pnpm run build",
+    "certify:owner": "pnpm run build && node scripts/certify-owner.mjs"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.99.1",

@@ -2,6 +2,7 @@
 import { readFile } from "node:fs/promises";
 import { createMockRuntime } from "../testing/index.js";
 import { replayJournal } from "../observation/index.js";
+import { ownerCommand } from "./owner.js";
 
 const VERSION = "0.1.0";
 const HELP = `tsukai ${VERSION} — ephemeral mock preview
@@ -11,9 +12,17 @@ Usage:
   tsukai --version
   tsukai demo [--json]
   tsukai replay <journal-path> [--json]
+  tsukai owner serve --state-dir D --jinushi-state-dir D --pi-executable P
+  tsukai owner status --state-dir D
+  tsukai run create --state-dir D --cwd D [--parent ID] [--label L]  (prompt on stdin)
+  tsukai run get|result|cancel <id> --state-dir D
+  tsukai run wait <id> --state-dir D [--timeout-ms N]
+  tsukai run list --state-dir D
 
 demo --json writes metadata-only JSONL to stdout; diagnostics use stderr.
-Each invocation owns only its own temporary mock workers.`;
+Each invocation owns only its own temporary mock workers.
+owner/run commands talk to the resident local owner over an access-controlled
+Unix socket; TSUKAI_STATE_DIR may replace --state-dir.`;
 
 async function demo(json: boolean): Promise<void> {
   const runtime = createMockRuntime();
@@ -100,6 +109,10 @@ async function main(args: string[]): Promise<void> {
     args[1] !== "--json"
   ) {
     await replay(args[1], args.includes("--json"));
+    return;
+  }
+  if (args[0] === "owner" || args[0] === "run") {
+    await ownerCommand(args);
     return;
   }
   throw new Error("Invalid command or arguments. Use tsukai --help.");
