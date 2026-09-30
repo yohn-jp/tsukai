@@ -41,3 +41,18 @@ M1b code closure requires:
 - live Jinushi + Pi certification when the required local binaries/environment are available.
 
 The repository must not claim the final verification/certification items until they have actually run. The former Jinushi #5/#8 implementation blockers no longer gate M1b.
+
+## Closure evidence (Issue #12)
+
+Certified against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` (Linux backend, built with Go 1.26.0) and `@earendil-works/pi-coding-agent@0.99.1` (tag `v0.99.1`, commit `d86654abb8862e201933517d6f1fce9f88dd117f`, artifact digest verified by `scripts/pi-artifact.mjs`). Jinushi's Go code (protocol, model, IPC, supervisor) is identical to the `44c5003` freeze above; later commits changed only community/CI files. The Tsukai adapter already matched the DTOs, so no adapter code changed.
+
+`pnpm run certify:jinushi` (real supervisor, credential-free) now proves:
+
+- transport: one Jinushi-owned Pi RPC process answers `get_state` with a real session ID; `closeInput` plus retirement yield a terminal Jinushi receipt matching the execution Run ID;
+- AgentRun: `createPiRuntime` over the Jinushi port yields one AgentRun, one Jinushi Run, one Pi session (three distinct IDs). With no provider, Pi settles with an explicit provider error, so the outcome is `failed` (`pi_assistant_error`), never success. Journal order is `harness.session`, `prompt_accepted`, `agent_end`, `agent_settled`, then `execution.exit`; the physical receipt is inspected through Jinushi. Replaying the AgentRun's stable submission identity with the same specification returns the same Jinushi Run; a changed specification is rejected; a late cancel does not rewrite the outcome;
+- cancel: concurrent `runs.cancel` calls end with a terminal receipt (`cancelled`, not forced) and a terminal Jinushi Run;
+- retry/idempotency: replayed submission returns the same Run; a second writer owner is refused while the lease is held; replayed `input`, `close-input`, and `cancel` with the same request identity and generation do not repeat the effect (a replayed `get_state` frame produced exactly one response); a wrong generation fails explicitly; a terminal Run grants no writer lease.
+
+Provider-backed semantic certification: ENVIRONMENT_BLOCKED (no provider/model credentials in the certification environment). The Jinushi Pi port does not select provider models, so that lane is not implemented for Jinushi; only the direct-runner `certify:pi` lane exists.
+
+Remaining limitations: the Tsukai runtime is ephemeral (no resident owner or restart recovery; #13), certification ran on the Linux backend only, and Jinushi resource enforcement was unavailable in the certification environment (cgroup controllers not enforced).

@@ -1,4 +1,4 @@
-/** Jinushi protocol v1 projection, checked against jinushi main@44c5003. */
+/** Jinushi protocol v1 projection, checked against jinushi main@3db1f2a (protocol code identical to 44c5003). */
 export interface JinushiRunSpec {
   argv: string[];
   cwd: string;
