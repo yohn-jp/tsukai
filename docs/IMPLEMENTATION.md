@@ -1,6 +1,31 @@
 # Implementation roadmap
 
-Status: M0, M1a, and M1b are complete. M1b was re-certified by Issue #12 against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` and the published Pi 0.99.1 artifact (evidence in [M1B-JINUSHI.md](M1B-JINUSHI.md)); provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local credentials. M2 (resident ownership, #13) is implemented on its PR branch (see [M2-OWNER.md](M2-OWNER.md)); PR #7 had only established durability/recovery seams. M3 (scoped agent-facing control, #14) is implemented on its PR branch (see [M3-AGENT.md](M3-AGENT.md)). M4 (operator observation projections and replay/profile UI consumers, #15) is implemented on its PR branch (see [M4-OBSERVATION.md](M4-OBSERVATION.md)). M5 (capability-aware multi-harness adapter contract, #16) is implemented on its PR branch (see [M5-HARNESS.md](M5-HARNESS.md)). The M6 (#17) preflight found that Mottainai cannot adopt Tsukai while runs are fixed to no tools/no extensions with a prompt-only request; M5.5 (admitted immutable harness execution profiles, #25) is that prerequisite and is implemented on its PR branch (see [M5.5-PROFILE.md](M5.5-PROFILE.md)). M6 is not complete. M1a's supported Pi is the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
+Status (current `main`): M0 through M5.5 are complete and merged. M6 (#17) is the only remaining product milestone and has not started. `docs/ARCHITECTURE.md` remains the product-semantics authority.
+
+| Milestone | Issue | Merged PR | Evidence |
+| --- | --- | --- | --- |
+| M0 — publishable mock preview | — | — | this document, [Baseline](#baseline) |
+| M1a — Pi 0.99.1 RPC integration | #11 | #18 | [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh) |
+| M1b — Jinushi production execution | #12 | #19 | [M1B-JINUSHI.md](M1B-JINUSHI.md) |
+| M2 — resident owner and durability | #13 | #21 | [M2-OWNER.md](M2-OWNER.md) |
+| M3 — scoped agent-facing control | #14 | #22 | [M3-AGENT.md](M3-AGENT.md) |
+| M4 — operator observation projections | #15 | #23 | [M4-OBSERVATION.md](M4-OBSERVATION.md) |
+| M5 — capability-aware multi-harness adapters | #16 | #24 | [M5-HARNESS.md](M5-HARNESS.md) |
+| M5.5 — admitted immutable execution profiles | #25 | #26 | [M5.5-PROFILE.md](M5.5-PROFILE.md) |
+
+M5.5 was added after the first M6 preflight found that Mottainai cannot adopt Tsukai while runs are fixed to no tools/no extensions with a prompt-only request. It is the resolved M6 preflight prerequisite. Provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local provider credentials in every milestone that has such a lane.
+
+## Remaining canonical sequence
+
+Remaining work is limited to the open canonical Issues under Epic #10, in this order:
+
+1. #29 — restore canonical green GitHub CI and repository governance (Typecheck without build-order dependence, Inari snapshot provenance).
+2. #28 — repair the `certify:agent` restart lane against M2 uncertainty semantics.
+3. #27 — release the post-M5.5 public API as a consumable npm package.
+4. #17 (with yohn-jp/mottainai#984 as the Mottainai-side implementation authority) — M6 Mottainai adoption, consuming the released package.
+5. Final canonical audit of both repositories, then closure of Epic #10 only once M6 is proven end-to-end.
+
+The sections below record each milestone's original scope, contract decisions, and acceptance criteria. Where they speak in the future tense ("future production path", "not yet implemented"), they describe the state at that milestone's start, not current `main`.
 
 ## Baseline
 
@@ -10,20 +35,22 @@ M0 did **not** certify live Pi, Jinushi, durable ownership, parent-agent tools, 
 
 ## Delivery roadmap
 
-| Milestone | Scope | Completion boundary |
-| --- | --- | --- |
-| M1a | Pi RPC protocol integration and live transport certification | Tsukai can drive and observe a separately executed Pi RPC process through an injected execution/transport boundary; direct spawn exists only as explicit certification/test infrastructure |
-| M1b (complete) | Jinushi production execution adapter | Production AgentRuns launch/retire Pi through current accepted Jinushi contracts and preserve physical/semantic evidence separation |
-| M2 (implemented, #13) | Resident local owner and durability | Cross-client local IPC, durable registry/journal, restart reconciliation, explicit uncertainty and event gaps |
-| M3 | Agent-facing control surface | Scoped `agent_spawn/status/wait/result/cancel`, parent/child runs, independent child execution |
-| M4 | Operator observability | Fleet/tree/timeline/resource/usage projections and replay/profile UI consumers |
-| M5 (implemented, #16) | Multi-harness adapters | Additional harnesses behind capability-aware adapters without degrading Pi-native observations to a lowest-common-denominator model |
-| M5.5 (implemented, #25) | Admitted execution profiles | Caller-admitted provider/model/tools/extensions validated, bound immutably, projected into the Jinushi-submitted harness invocation, durable across restart; default deny without a profile |
-| M6 | Mottainai adoption | Mottainai consumes Tsukai as the AgentRun layer; orchestration policy remains outside Tsukai |
+| Milestone | Scope | Completion boundary | State |
+| --- | --- | --- | --- |
+| M1a | Pi RPC protocol integration and live transport certification | Tsukai can drive and observe a separately executed Pi RPC process through an injected execution/transport boundary; direct spawn exists only as explicit certification/test infrastructure | complete |
+| M1b | Jinushi production execution adapter | Production AgentRuns launch/retire Pi through current accepted Jinushi contracts and preserve physical/semantic evidence separation | complete |
+| M2 | Resident local owner and durability | Cross-client local IPC, durable registry/journal, restart reconciliation, explicit uncertainty and event gaps | complete |
+| M3 | Agent-facing control surface | Scoped `agent_spawn/status/wait/result/cancel`, parent/child runs, independent child execution | complete |
+| M4 | Operator observability | Fleet/tree/timeline/resource/usage projections and replay/profile UI consumers | complete |
+| M5 | Multi-harness adapters | Additional harnesses behind capability-aware adapters without degrading Pi-native observations to a lowest-common-denominator model | complete |
+| M5.5 | Admitted execution profiles | Caller-admitted provider/model/tools/extensions validated, bound immutably, projected into the Jinushi-submitted harness invocation, durable across restart; default deny without a profile | complete |
+| M6 | Mottainai adoption | Mottainai consumes Tsukai as the AgentRun layer; orchestration policy remains outside Tsukai | not started (#17) |
 
 Milestones are sequential architectural gates, not permission for one implementation session to run through the whole roadmap.
 
-# M1a: Pi RPC protocol integration
+# M1a: Pi RPC protocol integration (complete; historical milestone record)
+
+This section is the M1a milestone specification as authorized at its start. M1a and M1b are merged; the Jinushi adapter it anticipates is the production path on current `main`.
 
 ## Goal
 
@@ -214,13 +241,15 @@ Commit, push, and create one PR to `main` using `gh`. Do not merge, tag, release
 13. README states M1a's exact support: Pi RPC protocol integration is implemented; production physical execution is not Jinushi-backed until M1b; resident/durable control is not yet implemented.
 14. If a configured provider/model is available, an opt-in end-to-end live prompt certification may prove real message/tool/settlement events. If unavailable, the final report names that certification ENVIRONMENT_BLOCKED and relies only on the deterministic protocol/transport evidence above.
 
-## M1b entry condition
+## M1b entry condition (historical; M1b complete)
 
 Do not start M1b until Jinushi has an accepted implementation/API sufficient to start a non-interactive Run, write stdin, consume stdout/stderr with explicit ordering/gap semantics, inspect/await physical lifecycle, and retire the owned Run. At M1b start, read the then-current Jinushi implementation and contract; do not code from the illustrative schema in old documents.
 
-The original M1b implementation was integrated against Jinushi `90e52ca` while retry-safe submission/control and notifier-driven observation were still incomplete. Those dependencies are now implemented on Jinushi main: #5 provides durable submission identities plus generation-checked request identities, and #8 provides notifier-driven observation and writer ownership. The M1b closure scope is therefore to align the existing adapter to the current contract, use the Jinushi retry guarantees rather than a Tsukai-side substitute, rerun focused/full/package verification, and perform live Jinushi + Pi certification when the required local environment is available. Do not begin M2 until that closure evidence is recorded.
+The original M1b implementation was integrated against Jinushi `90e52ca` while retry-safe submission/control and notifier-driven observation were still incomplete. Those dependencies are now implemented on Jinushi main: #5 provides durable submission identities plus generation-checked request identities, and #8 provides notifier-driven observation and writer ownership. The M1b closure scope is therefore to align the existing adapter to the current contract, use the Jinushi retry guarantees rather than a Tsukai-side substitute, rerun focused/full/package verification, and perform live Jinushi + Pi certification when the required local environment is available. That closure evidence is recorded in [M1B-JINUSHI.md](M1B-JINUSHI.md) (Issue #12, PR #19).
 
 ## Later milestone invariants
+
+These invariants remain binding on current `main` and on M6.
 
 - M2 may add durability/IPC but cannot move process ownership from Jinushi into Tsukai.
 - M3 may expose parent-agent tools but lineage alone never grants authorization.

@@ -8,7 +8,7 @@ import {
 import { ownerCommand } from "./owner.js";
 
 const VERSION = "0.1.0";
-const HELP = `tsukai ${VERSION} — ephemeral mock preview
+const HELP = `tsukai ${VERSION} — AgentRun lifecycle and observation
 
 Usage:
   tsukai --help
@@ -27,7 +27,8 @@ Usage:
   tsukai run grant|revoke <id> --state-dir D   (operator: agent credential for a run)
 
 demo --json writes metadata-only JSONL to stdout; diagnostics use stderr.
-Each invocation owns only its own temporary mock workers.
+demo is the ephemeral mock preview: each invocation owns only its own
+temporary synthetic mock workers.
 owner/run commands talk to the resident local owner over an access-controlled
 Unix socket; TSUKAI_STATE_DIR may replace --state-dir.`;
 

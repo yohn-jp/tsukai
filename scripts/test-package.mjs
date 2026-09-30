@@ -211,7 +211,12 @@ try {
   run(process.execPath, ["sdk.mjs"]);
 
   const cli = join(consumer, "node_modules", ".bin", "tsukai");
-  assert.match(run(cli, ["--help"]), /mock preview/);
+  {
+    const help = run(cli, ["--help"]);
+    assert.match(help, /AgentRun lifecycle and observation/);
+    assert.match(help, /mock preview/);
+    assert.match(help, /owner serve/);
+  }
   assert.equal(run(cli, ["--version"]).trim(), "0.1.0");
   const jsonl = run(cli, ["demo", "--json"]);
   for (const line of jsonl.trim().split("\n"))

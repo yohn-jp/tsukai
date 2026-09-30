@@ -1,6 +1,6 @@
 # Tsukai architecture
 
-Status: initial design baseline, 2026-09-27. This document defines the target; `IMPLEMENTATION.md` selects what is implemented first. Described capabilities are not claims of existing implementation.
+Status: design baseline, 2026-09-27; product-semantics authority. This document defines the target architecture. Implementation state is recorded in `IMPLEMENTATION.md`: M0 through M5.5 are merged on `main`, and M6 (Mottainai adoption, #17) remains. Capabilities described here for M6 are not claims of existing implementation.
 
 ## 1. Purpose and boundaries
 
@@ -136,7 +136,7 @@ Use local OS access control for the owner endpoint. Do not expose an unauthentic
 
 M0 is complete on `main`: the mock preview provides real AgentRun lifecycle/projection/recording/replay logic over explicitly synthetic harness events and independently spawned fixed fixtures. Its storage and owner are ephemeral. M0 proves the package contract, not production integration.
 
-Delivery after M0 is gated as follows:
+Delivery after M0 is gated as follows. M1a through M5.5 are complete on `main`; M6 has not started.
 
 - **M1a — Pi RPC protocol integration:** real Pi RPC framing, command correlation, native-event mapping, settlement semantics, and explicit live transport certification over an injected execution/transport boundary. Any direct Pi spawn is certification/testing infrastructure only.
 - **M1b — Jinushi production execution:** bind AgentRun physical ownership to the then-current accepted Jinushi API and certify cancellation/retirement without a production direct-spawn fallback.
