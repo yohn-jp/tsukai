@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type {
+  PiAttachResult,
   PiDuplexExecution,
   PiDuplexExecutionPort,
   PiTransportObserver,
@@ -46,13 +47,23 @@ export interface JinushiPiExecutionPortOptions {
   outputPageBytes?: number;
 }
 
+const GAP_KINDS: Record<string, "event" | "output"> = {
+  JINUSHI_EVENT_GAP: "event",
+  JINUSHI_OUTPUT_GAP: "output",
+  JINUSHI_OUTPUT_SHORT_READ: "output",
+};
+
 export class JinushiExecutionError extends Error {
   readonly code: string;
+  /** Present when the error means observed history was lost, not just delayed. */
+  readonly gapKind?: "event" | "output";
 
   constructor(code: string, message: string, options?: ErrorOptions) {
     super(message, options);
     this.name = "JinushiExecutionError";
     this.code = code;
+    const gapKind = GAP_KINDS[code];
+    if (gapKind !== undefined) this.gapKind = gapKind;
   }
 }
 
@@ -315,6 +326,7 @@ class JinushiPiExecution implements PiDuplexExecution {
   private lastError: Error | undefined;
   private terminalEvidenceSeen = false;
   private reportedExit = false;
+  private resumed = false;
 
   constructor(
     private readonly client: JinushiClient,
@@ -325,6 +337,8 @@ class JinushiPiExecution implements PiDuplexExecution {
       maxStderrBytes: number;
       maxWriteQueueBytes: number;
       outputPageBytes: number;
+      /** Re-attach: resume event follow here and re-deliver stdout from 0. */
+      resume?: { eventSeq: number; stderrOffset: number };
     },
     onTerminal: (executionRunId: string) => void,
   ) {
@@ -342,6 +356,11 @@ class JinushiPiExecution implements PiDuplexExecution {
     this.outputPageBytes = options.outputPageBytes;
     this.onTerminal = onTerminal;
     this.currentRun = run;
+    if (options.resume !== undefined) {
+      this.resumed = true;
+      this.lastEventSeq = options.resume.eventSeq;
+      this.stderrOffset = options.resume.stderrOffset;
+    }
     this.ready = new Promise<void>((resolveReady) => {
       this.readyResolve = resolveReady;
     });
@@ -353,7 +372,7 @@ class JinushiPiExecution implements PiDuplexExecution {
       .then(() =>
         this.client.followEvents(
           this.executionRunId,
-          0,
+          this.lastEventSeq,
           this.controller.signal,
           async (page) => this.enqueuePage(page),
         ),
@@ -797,6 +816,26 @@ class JinushiPiExecution implements PiDuplexExecution {
       const run = await this.client.inspect(this.executionRunId);
       await this.handleRun(run);
     }
+    this.reportProgress();
+  }
+
+  /** Cursors advance only after every earlier byte reached the observer. */
+  private reportProgress(): void {
+    if (this.reportedError) return;
+    try {
+      this.observer.onProgress?.({
+        eventSeq: this.lastEventSeq,
+        stdoutOffset: this.stdoutOffset,
+        stderrOffset: this.stderrOffset,
+      });
+    } catch {
+      /* A failed cursor commit leaves the older durable cursor in force. */
+    }
+  }
+
+  /** Stops observing. The physical Run is left untouched. */
+  detach(): void {
+    if (!this.controller.signal.aborted) this.controller.abort();
   }
 
   private async handleRun(run: JinushiRun): Promise<void> {
@@ -880,6 +919,7 @@ class JinushiPiExecution implements PiDuplexExecution {
         this.reportExit(receipt);
       }
     }
+    this.reportProgress();
   }
 
   private async drainOutput(
@@ -1037,7 +1077,8 @@ class JinushiPiExecution implements PiDuplexExecution {
     this.readyResolve();
     if (!this.controller.signal.aborted) this.controller.abort();
     this.onTerminal(this.executionRunId);
-    if (receipt.status === "exited" && this.reportedError) return;
+    if (receipt.status === "exited" && this.reportedError && !this.resumed)
+      return;
     try {
       this.observer.onExit(receipt);
     } catch {
@@ -1200,6 +1241,68 @@ export function createJinushiPiExecutionPort(
       executions.set(run.runId, execution);
       await execution.start(run);
       return execution;
+    },
+    async attach(
+      executionRunId: string,
+      observer: PiTransportObserver,
+      resume: { eventSeq: number; stderrOffset: number },
+      onOpen: (execution: PiDuplexExecution) => void,
+    ): Promise<PiAttachResult> {
+      if (disposed) {
+        throw new JinushiExecutionError(
+          "JINUSHI_PORT_DISPOSED",
+          "Jinushi Pi execution port has been disposed",
+        );
+      }
+      try {
+        validateRunId(executionRunId);
+      } catch {
+        return { status: "ambiguous", reason: "execution-identity-invalid" };
+      }
+      if (executions.has(executionRunId)) {
+        return { status: "ambiguous", reason: "execution-already-attached" };
+      }
+      // Read-only evidence first: attaching must never create a Run.
+      let run: JinushiRun;
+      try {
+        run = await options.client.inspect(executionRunId);
+      } catch (error) {
+        return clientCode(error) === "run-not-found"
+          ? { status: "missing", reason: "jinushi-run-not-found" }
+          : { status: "ambiguous", reason: "jinushi-inspect-failed" };
+      }
+      if (!run || run.runId !== executionRunId) {
+        return { status: "ambiguous", reason: "jinushi-run-identity-mismatch" };
+      }
+      let backend: string;
+      try {
+        backend = run.ownership?.backend || (await capabilities()).backend;
+      } catch {
+        return { status: "ambiguous", reason: "jinushi-capabilities-failed" };
+      }
+      const execution = new JinushiPiExecution(
+        options.client,
+        run,
+        backend,
+        observer,
+        { maxStderrBytes, maxWriteQueueBytes, outputPageBytes, resume },
+        (runId) => executions.delete(runId),
+      );
+      executions.set(run.runId, execution);
+      onOpen(execution);
+      try {
+        await execution.start(run);
+      } catch {
+        executions.delete(run.runId);
+        execution.detach();
+        return { status: "ambiguous", reason: "jinushi-attach-failed" };
+      }
+      return { status: "attached", execution };
+    },
+    async detach(): Promise<void> {
+      disposed = true;
+      for (const execution of executions.values()) execution.detach();
+      executions.clear();
     },
     dispose(): Promise<void> {
       if (disposePromise !== undefined) return disposePromise;

@@ -6,6 +6,7 @@ import type {
   Lifecycle,
   Outcome,
   PhysicalReceipt,
+  RunRecovery,
   RunSnapshot,
   SemanticState,
 } from "../contracts/types.js";
@@ -43,6 +44,15 @@ export interface RunRecord {
   retirementRequests: Set<"settled" | "cancel">;
   cancelIntentSeen: boolean;
   decoderFinished: boolean;
+  /** Durable-owner state; unused by the ephemeral mock owner. */
+  recovery?: RunRecovery;
+  cursor: { eventSeq: number; stdoutOffset: number; stderrOffset: number };
+  startRequested: boolean;
+  dispatch?: "requested" | "accepted";
+  /** True while this process holds a live observation of the execution. */
+  attached: boolean;
+  /** Set when a state commit failed; durable state is then behind memory. */
+  persistFailed: boolean;
 }
 
 export type RunChanges = Partial<
@@ -56,6 +66,7 @@ export type RunChanges = Partial<
     | "receipt"
     | "reason"
     | "semantic"
+    | "recovery"
   >
 >;
 
@@ -70,8 +81,8 @@ const allowedLifecycleChanges: Record<Lifecycle, ReadonlySet<Lifecycle>> = {
   ]),
   running: new Set(["stopping", "reconciling", "uncertain", "terminal"]),
   stopping: new Set(["reconciling", "uncertain", "terminal"]),
-  reconciling: new Set(["stopping", "uncertain", "terminal"]),
-  uncertain: new Set(["stopping", "reconciling", "terminal"]),
+  reconciling: new Set(["running", "stopping", "uncertain", "terminal"]),
+  uncertain: new Set(["running", "stopping", "reconciling", "terminal"]),
   terminal: new Set(),
 };
 
@@ -158,5 +169,21 @@ export function toSnapshot(run: RunRecord): RunSnapshot {
     ...(run.outcome === undefined ? {} : { outcome: run.outcome }),
     ...(run.reason === undefined ? {} : { reason: run.reason }),
     completeness: run.completeness,
+    ...(run.recovery === undefined
+      ? {}
+      : {
+          recovery: {
+            state: run.recovery.state,
+            epoch: run.recovery.epoch,
+            attempts: run.recovery.attempts,
+            ...(run.recovery.reason === undefined
+              ? {}
+              : { reason: run.recovery.reason }),
+            gaps: run.recovery.gaps.map((gap) => ({ ...gap })),
+            ...(run.recovery.reconciledAt === undefined
+              ? {}
+              : { reconciledAt: run.recovery.reconciledAt }),
+          },
+        }),
   };
 }

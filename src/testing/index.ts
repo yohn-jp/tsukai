@@ -18,6 +18,8 @@ export function createMockRuntime(): MockRuntime {
 
   return {
     runs: service.runs,
+    reconcile: () => service.reconcile(),
+    detach: () => service.detach(),
     dispose: () => service.dispose(),
     release: (agentRunId) => execution.release(agentRunId),
     journal,

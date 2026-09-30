@@ -17,6 +17,24 @@ export interface PiRpcClientOptions {
   maxPendingRequests?: number;
   defaultTimeoutMs?: number;
   onFailure?: (error: Error) => void;
+  /**
+   * Resume only: records that end at or before this stdout offset were
+   * produced by an earlier owner. Their responses never resolve a request and
+   * their events are flagged historical.
+   */
+  replayUntil?: number;
+  /** Resume only: a response without a pending request is reported, not fatal. */
+  onForeignResponse?: (record: Record<string, unknown>) => void;
+  /** Called after each complete record (response or event) is fully applied. */
+  onRecordEnd?: (end: number) => void;
+}
+
+export interface PiRecordMeta {
+  /** Stdout offset of the first byte of this record. */
+  start: number;
+  /** Stdout offset just after this record's LF. */
+  end: number;
+  historical: boolean;
 }
 
 export interface PiRpcClient {
@@ -30,6 +48,7 @@ export interface PiRpcClient {
 export type PiRpcEventHandler = (
   record: Record<string, unknown>,
   frame: Uint8Array,
+  meta: PiRecordMeta,
 ) => void;
 
 export class PiRpcProtocolError extends Error {
@@ -168,6 +187,9 @@ export function createPiRpcClient(
   let terminalError: Error | undefined;
   let writeChain: Promise<void> = Promise.resolve();
   let queuedWrites = 0;
+  let position = 0;
+  let recordStart = 0;
+  const replayUntil = options?.replayUntil ?? 0;
 
   const clearPending = (error: Error, report = false): void => {
     if (terminalError !== undefined) return;
@@ -238,7 +260,11 @@ export function createPiRpcClient(
     };
   };
 
-  const decodeFrame = (rawRecord: Uint8Array): void => {
+  const decodeFrame = (
+    rawRecord: Uint8Array,
+    start: number,
+    end: number,
+  ): void => {
     const contentLength =
       rawRecord.at(-1) === 0x0d
         ? rawRecord.byteLength - 1
@@ -277,8 +303,13 @@ export function createPiRpcClient(
           "INVALID_RESPONSE_ID",
         );
       }
-      const request = pending.get(parsed.id);
+      const historical = end <= replayUntil;
+      const request = historical ? undefined : pending.get(parsed.id);
       if (request === undefined) {
+        if (historical || options?.onForeignResponse !== undefined) {
+          options?.onForeignResponse?.(parsed);
+          return;
+        }
         throw new PiRpcProtocolError(
           "Pi RPC response has an unknown or duplicate id",
           "UNKNOWN_RESPONSE_ID",
@@ -294,13 +325,16 @@ export function createPiRpcClient(
     const frame = new Uint8Array(rawRecord.byteLength + 1);
     frame.set(rawRecord);
     frame[frame.byteLength - 1] = 0x0a;
-    onEvent(parsed, frame);
+    onEvent(parsed, frame, { start, end, historical: end <= replayUntil });
   };
 
-  const processRecord = (): void => {
+  const processRecord = (end: number): void => {
     const rawRecord = Uint8Array.from(buffered);
+    const start = recordStart;
     buffered = [];
-    decodeFrame(rawRecord);
+    recordStart = end;
+    decodeFrame(rawRecord, start, end);
+    if (terminalError === undefined) options?.onRecordEnd?.(end);
   };
 
   const request = (
@@ -412,8 +446,9 @@ export function createPiRpcClient(
 
     try {
       for (const byte of chunk) {
+        position += 1;
         if (byte === 0x0a) {
-          processRecord();
+          processRecord(position);
           if (terminalError !== undefined) return;
           continue;
         }

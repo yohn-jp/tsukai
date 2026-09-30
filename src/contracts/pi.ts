@@ -11,6 +11,15 @@ export interface PiTransportObserver {
   onStderr(chunk: Uint8Array): void;
   onExit(receipt: PhysicalReceipt): void;
   onError(error: Error): void;
+  /**
+   * Transport cursor after all earlier bytes were delivered. `stdoutOffset` is
+   * a transport offset; the harness adapter derives its record-aligned cursor.
+   */
+  onProgress?(cursor: {
+    eventSeq: number;
+    stdoutOffset: number;
+    stderrOffset: number;
+  }): void;
 }
 
 export interface PiDuplexExecution {
@@ -25,12 +34,31 @@ export interface PiDuplexExecution {
   retire(reason: "settled" | "cancel"): Promise<void>;
 }
 
+/** Backend evidence from re-attaching to a known execution identity. */
+export type PiAttachResult =
+  | { status: "attached"; execution: PiDuplexExecution }
+  | { status: "missing"; reason: string }
+  | { status: "ambiguous"; reason: string };
+
 export interface PiDuplexExecutionPort {
   open(
     agentRunId: string,
     observer: PiTransportObserver,
     workspace?: { cwd: string; workspaceSessionId?: string },
   ): Promise<PiDuplexExecution>;
+  /**
+   * Re-attach to an existing execution. Stdout is re-delivered from offset 0 so
+   * the harness can rebuild decoder state; `onOpen` hands over the execution
+   * before any byte is delivered. Never starts a process.
+   */
+  attach?(
+    executionRunId: string,
+    observer: PiTransportObserver,
+    resume: { eventSeq: number; stderrOffset: number },
+    onOpen: (execution: PiDuplexExecution) => void,
+  ): Promise<PiAttachResult>;
+  /** Stop observing without retiring any execution. */
+  detach?(): Promise<void>;
   dispose(): Promise<void>;
 }
 

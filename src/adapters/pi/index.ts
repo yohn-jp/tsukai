@@ -15,11 +15,13 @@ import type {
   PiDuplexExecutionPort,
   PiRunCreateInput,
   PiRunRequest,
+  PiTransportObserver,
 } from "../../contracts/pi.js";
 import type {
   ExecutionBinding,
   PhysicalReceipt,
 } from "../../contracts/types.js";
+import type { ResumeOutcome } from "../../contracts/ports.js";
 import { createMemoryJournal } from "../../observation/journal.js";
 import { createPiRpcClient, type PiRpcClient } from "./protocol.js";
 import { createPiHarness } from "./semantic.js";
@@ -157,9 +159,15 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
       let earlyFailure: Error | undefined;
       const early: Uint8Array[] = [];
       let earlyBytes = 0;
-      const earlyEvents: Uint8Array[] = [];
+      const earlyEvents: { frame: Uint8Array; start: number; end: number }[] =
+        [];
       let earlyEventBytes = 0;
       let promptContractVerified = false;
+      let boundary = 0;
+      let established = false;
+      // Record-aligned cursor: never past a frame the application has not seen.
+      const appliedCursor = (): number =>
+        earlyEvents.length > 0 ? earlyEvents[0]!.start : boundary;
       const fail = (error: Error): void => {
         if (failed) return;
         failed = true;
@@ -168,7 +176,7 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
         observer.onError(error);
         if (transport) void transport.retire("cancel").catch(() => undefined);
       };
-      const wireObserver = {
+      const wireObserver: PiTransportObserver = {
         onStdout(chunk: Uint8Array): void {
           if (client) {
             try {
@@ -208,6 +216,14 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
         onError(error: Error): void {
           fail(error);
         },
+        onProgress(cursor): void {
+          if (!established) return;
+          observer.onProgress?.({
+            eventSeq: cursor.eventSeq,
+            stdoutOffset: appliedCursor(),
+            stderrOffset: cursor.stderrOffset,
+          });
+        },
       };
       transport = await options.execution.open(
         agentRunId,
@@ -215,9 +231,23 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
         workspace,
       );
       const opened = transport;
+      try {
+        // The backend identity is durable before any prompt can be written.
+        await observer.onEstablished?.({
+          executionRunId: opened.executionRunId,
+          backend: opened.backend,
+          ...(opened.pid === undefined ? {} : { pid: opened.pid }),
+          piVersion: options.piVersion,
+          piRevision: options.piRevision,
+        });
+      } catch (error) {
+        void opened.retire("cancel").catch(() => undefined);
+        throw error;
+      }
+      established = true;
       client = createPiRpcClient(
         opened,
-        (record, frame) => {
+        (record, frame, meta) => {
           if (record.type === "extension_ui_request") {
             observer.onSignal?.({
               type: "settlement",
@@ -237,15 +267,18 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
               );
               return;
             }
-            earlyEvents.push(frame);
+            earlyEvents.push({ frame, start: meta.start, end: meta.end });
             return;
           }
-          observer.onOutput(frame);
+          observer.onOutput(frame, `pi:stdout:${meta.end}`);
         },
         {
           maxRecordBytes: limits.maxRecordBytes,
           maxBufferedBytes: limits.maxQueuedInputBytes,
           onFailure: fail,
+          onRecordEnd: (end) => {
+            boundary = end;
+          },
         },
       );
       for (const chunk of early) client.push(chunk);
@@ -300,6 +333,7 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
               },
             },
           });
+          observer.onDispatch?.("requested"); // durable before the write
           const response = await client!.request(
             { type: "prompt", message: request.prompt },
             commandTimeoutMs,
@@ -326,6 +360,7 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
             return;
           }
           promptContractVerified = true;
+          observer.onDispatch?.("accepted");
           observer.onSignal?.({
             type: "observation",
             draft: {
@@ -334,9 +369,10 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
               payload: { disposition: "started" },
             },
           });
-          for (const frame of earlyEvents) observer.onOutput(frame);
-          earlyEvents.length = 0;
+          const flush = earlyEvents.splice(0);
           earlyEventBytes = 0;
+          for (const entry of flush)
+            observer.onOutput(entry.frame, `pi:stdout:${entry.end}`);
         } catch (error) {
           fail(
             error instanceof Error ? error : new Error("Pi handshake failed"),
@@ -386,6 +422,162 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
       })();
       return state.retirement;
     },
+    async resume(binding, observer, cursor): Promise<ResumeOutcome> {
+      if (disposed) throw new Error("Pi runtime has been disposed");
+      const port = options.execution;
+      if (port.attach === undefined) {
+        return { status: "ambiguous", reason: "execution-port-cannot-attach" };
+      }
+      let client: PiRpcClient | undefined;
+      let transport: PiDuplexExecution | undefined;
+      let failed = false;
+      let exited = false;
+      let boundary = 0;
+      // A resumed observation failure never retires the process: losing sight
+      // of an execution is not a reason to kill it.
+      const fail = (error: Error): void => {
+        if (failed) return;
+        failed = true;
+        client?.fail(error);
+        observer.onError(error);
+      };
+      const wire: PiTransportObserver = {
+        onStdout(chunk): void {
+          try {
+            client?.push(chunk);
+          } catch (error) {
+            fail(
+              error instanceof Error ? error : new Error("Pi protocol failed"),
+            );
+          }
+        },
+        onStderr(): void {
+          /* Diagnostics are owned and bounded by the execution port. */
+        },
+        onExit(receipt: PhysicalReceipt): void {
+          exited = true;
+          try {
+            client?.finish();
+          } catch (error) {
+            observer.onError(
+              error instanceof Error ? error : new Error("Pi EOF failed"),
+            );
+          }
+          observer.onExit(receipt);
+          if (receipt.executionRunId === binding.executionRunId)
+            active.delete(receipt.executionRunId);
+        },
+        onError: fail,
+        onProgress(progress): void {
+          observer.onProgress?.({
+            eventSeq: progress.eventSeq,
+            stdoutOffset: boundary,
+            stderrOffset: progress.stderrOffset,
+          });
+        },
+      };
+      const onForeignResponse = (record: Record<string, unknown>): void => {
+        // Responses written by an earlier owner. They only recover facts.
+        const data = record.data;
+        if (record.command === "get_state" && record.success === true) {
+          const sessionId =
+            data && typeof data === "object" && "sessionId" in data
+              ? (data as { sessionId: unknown }).sessionId
+              : undefined;
+          if (
+            binding.sessionId === undefined &&
+            typeof sessionId === "string" &&
+            sessionId.length > 0 &&
+            Buffer.byteLength(sessionId, "utf8") <= 256
+          ) {
+            observer.onBindingUpdate?.({
+              ...binding,
+              sessionId,
+              piVersion: options.piVersion,
+              piRevision: options.piRevision,
+            });
+            observer.onSignal?.({
+              type: "observation",
+              draft: {
+                source: "harness",
+                kind: "harness.session",
+                sourceIdentity: "pi:session",
+                payload: {
+                  sessionId,
+                  piVersion: options.piVersion,
+                  piRevision: options.piRevision,
+                },
+              },
+            });
+          }
+        } else if (record.command === "prompt") {
+          const disposition =
+            data && typeof data === "object" && "disposition" in data
+              ? (data as { disposition: unknown }).disposition
+              : undefined;
+          if (record.success === true && disposition === "started") {
+            observer.onDispatch?.("accepted");
+          } else {
+            observer.onSignal?.({
+              type: "settlement",
+              status: "error",
+              reason:
+                record.success !== true
+                  ? "pi-prompt-rejected"
+                  : disposition === "queued" || disposition === "handled"
+                    ? `pi-prompt-${String(disposition)}`
+                    : "pi-rpc-disposition-unsupported",
+            });
+          }
+        }
+      };
+      const result = await port.attach(
+        binding.executionRunId,
+        wire,
+        { eventSeq: cursor.eventSeq, stderrOffset: cursor.stderrOffset },
+        (opened) => {
+          transport = opened;
+          client = createPiRpcClient(
+            opened,
+            (record, frame, meta) => {
+              if (record.type === "extension_ui_request") {
+                if (meta.historical) return;
+                observer.onSignal?.({
+                  type: "settlement",
+                  status: "error",
+                  reason: "pi-required-interaction-unsupported",
+                });
+                void opened.retire("cancel").catch(() => undefined);
+                return;
+              }
+              if (meta.historical) observer.onReplay?.(frame);
+              else observer.onOutput(frame, `pi:stdout:${meta.end}`);
+            },
+            {
+              maxRecordBytes: limits.maxRecordBytes,
+              maxBufferedBytes: limits.maxQueuedInputBytes,
+              replayUntil: cursor.stdoutOffset,
+              onForeignResponse,
+              onRecordEnd: (end) => {
+                boundary = end;
+              },
+              onFailure: fail,
+            },
+          );
+          active.set(opened.executionRunId, { transport: opened, client });
+        },
+      );
+      if (result.status !== "attached") {
+        if (transport !== undefined) active.delete(transport.executionRunId);
+        return result;
+      }
+      if (exited) active.delete(binding.executionRunId);
+      return { status: "attached", physical: exited ? "terminal" : "running" };
+    },
+    async detach(): Promise<void> {
+      disposed = true;
+      await options.execution.detach?.();
+    },
     async dispose(): Promise<void> {
       disposed = true;
       await options.execution.dispose();
@@ -400,5 +592,11 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
     harnessIdentity: { name: "pi", version: options.piVersion },
     validateInput: validatePiInput,
   });
-  return { runs: service.runs, dispose: () => service.dispose(), journal };
+  return {
+    runs: service.runs,
+    reconcile: () => service.reconcile(),
+    detach: () => service.detach(),
+    dispose: () => service.dispose(),
+    journal,
+  };
 }
