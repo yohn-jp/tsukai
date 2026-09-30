@@ -23,7 +23,7 @@ export type Activity =
 export type Outcome = "completed" | "failed" | "cancelled" | "interrupted";
 export type MockScenario =
   "normal" | "error" | "crash" | "retry" | "quiet" | "hold";
-export type HarnessName = "mock" | "pi";
+export type HarnessName = "mock" | "pi" | "claude-code";
 export interface MockRunRequest {
   scenario: MockScenario;
   reportedText?: string;
@@ -62,6 +62,8 @@ export interface ExecutionBinding {
   sessionId?: string;
   piVersion?: string;
   piRevision?: string;
+  /** Harness version reported by the harness itself (non-Pi adapters). */
+  harnessVersion?: string;
 }
 
 export type RecoveryState =

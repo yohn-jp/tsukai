@@ -13,6 +13,7 @@ export type OwnerErrorCode =
   | "WAIT_TIMEOUT"
   | "OWNER_BUSY"
   | "OWNER_UNAVAILABLE"
+  | "HARNESS_CAPABILITY_UNSUPPORTED"
   | "INTERNAL";
 
 export class OwnerError extends Error {

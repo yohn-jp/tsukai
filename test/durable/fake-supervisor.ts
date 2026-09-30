@@ -26,6 +26,10 @@ export interface FakeRun {
   waiters: Set<() => void>;
   heldTranscript: boolean;
   promptDisposition: "started" | "queued";
+  /** Claude Code records still withheld by `holdTranscript`. */
+  heldRecords?: object[];
+  /** Protocol the fake process speaks, derived from its argv. */
+  protocol: "pi" | "claude-code";
 }
 
 /** An in-memory Jinushi that outlives any number of Tsukai owner instances. */
@@ -44,6 +48,17 @@ export class FakeSupervisor {
   /** Pi exits as soon as its stdin closes (a real Pi does). */
   exitOnCloseInput = true;
   promptDisposition: "started" | "queued" = "started";
+  /** Claude Code records written after the user message (per run). */
+  claudeTranscript: (run: FakeRun) => object[] = claudeSuccessTranscript;
+  /**
+   * With `holdTranscript`, Claude Code still writes `system/init` (its first
+   * output for the prompt) unless this is set.
+   */
+  claudeHoldBeforeInit = false;
+  /** Pi records emitted after a started prompt; default is a settled success. */
+  piTranscript: ((run: FakeRun) => object[]) | undefined;
+  /** Every Run specification Jinushi was asked to start. */
+  readonly specs: JinushiRunSpec[] = [];
   private sequence = 0;
 
   view(): FakeClientView {
@@ -99,6 +114,7 @@ export class FakeSupervisor {
 
   create(submissionId: string, spec: JinushiRunSpec): FakeRun {
     this.runCalls += 1;
+    this.specs.push(structuredClone(spec));
     const digest = createHash("sha256")
       .update(JSON.stringify(spec))
       .digest("hex");
@@ -126,6 +142,7 @@ export class FakeSupervisor {
       waiters: new Set(),
       heldTranscript: false,
       promptDisposition: this.promptDisposition,
+      protocol: spec.argv.includes("stream-json") ? "claude-code" : "pi",
     };
     this.runs.set(run.runId, run);
     this.submissions.set(submissionId, run.runId);
@@ -154,6 +171,11 @@ export class FakeSupervisor {
 
   /** The documented Pi 0.99.1 shape for a normal, settled prompt. */
   emitTranscript(run: FakeRun, text = "private answer"): void {
+    if (this.piTranscript !== undefined) {
+      for (const record of this.piTranscript(run)) this.emitStdout(run, record);
+      run.heldTranscript = false;
+      return;
+    }
     this.emitStdout(run, { type: "agent_start" });
     this.emitStdout(run, {
       type: "message_end",
@@ -170,7 +192,15 @@ export class FakeSupervisor {
   }
 
   releaseTranscript(run: FakeRun): void {
-    if (run.heldTranscript) this.emitTranscript(run);
+    if (!run.heldTranscript) return;
+    if (run.protocol === "claude-code") {
+      run.heldTranscript = false;
+      const records = run.heldRecords ?? [];
+      delete run.heldRecords;
+      for (const record of records) this.emitStdout(run, record);
+      return;
+    }
+    this.emitTranscript(run);
   }
 
   terminate(run: FakeRun, exitCode: number, forced = false): void {
@@ -192,13 +222,48 @@ export class FakeSupervisor {
   }
 
   promptsSeen(run: FakeRun): number {
-    return run.inputCommands.filter((command) => command.type === "prompt")
-      .length;
+    return run.inputCommands.filter(
+      (command) => command.type === "prompt" || command.type === "user",
+    ).length;
+  }
+
+  /** Claude Code stream-json: one user message, then `interrupt` controls. */
+  private handleClaudeInput(run: FakeRun, line: string): void {
+    const record = JSON.parse(line) as {
+      type: string;
+      request_id?: string;
+      request?: { subtype?: string };
+    };
+    run.inputCommands.push({ type: record.type });
+    if (record.type === "user") {
+      this.prompts += 1;
+      const records = this.claudeTranscript(run);
+      if (this.holdTranscript) {
+        run.heldTranscript = true;
+        if (!this.claudeHoldBeforeInit) this.emitStdout(run, records.shift()!);
+        run.heldRecords = records;
+        return;
+      }
+      for (const item of records) this.emitStdout(run, item);
+    } else if (record.type === "control_request") {
+      this.emitStdout(run, {
+        type: "control_response",
+        response: {
+          subtype: "success",
+          request_id: record.request_id,
+          response: { still_queued: [] },
+        },
+      });
+    }
   }
 
   handleInput(run: FakeRun, bytes: Uint8Array): void {
     for (const line of Buffer.from(bytes).toString("utf8").split("\n")) {
       if (line.length === 0) continue;
+      if (run.protocol === "claude-code") {
+        this.handleClaudeInput(run, line);
+        continue;
+      }
       const command = JSON.parse(line) as { type: string; id: string };
       run.inputCommands.push(command);
       if (command.type === "get_state") {
@@ -236,6 +301,86 @@ export class FakeSupervisor {
   wake(run: FakeRun): void {
     for (const wake of [...run.waiters]) wake();
   }
+}
+
+/**
+ * A settled Claude Code turn shaped per the `@anthropic-ai/claude-agent-sdk`
+ * 0.3.285 message types (init, assistant tool_use, tool_result, assistant
+ * text, result). Captured credential-free transcripts live under
+ * test/claude-code/fixtures.
+ */
+export function claudeSuccessTranscript(run: FakeRun): object[] {
+  const session = `claude-session-${run.runId}`;
+  return [
+    {
+      type: "system",
+      subtype: "init",
+      session_id: session,
+      claude_code_version: "2.1.285",
+      model: "fixture-model",
+      permissionMode: "dontAsk",
+      tools: [],
+      cwd: "/workspace",
+    },
+    {
+      type: "assistant",
+      parent_tool_use_id: null,
+      session_id: session,
+      message: {
+        model: "fixture-model",
+        stop_reason: null,
+        content: [
+          { type: "tool_use", id: "toolu_1", name: "Read", input: { p: 1 } },
+        ],
+      },
+    },
+    {
+      type: "user",
+      parent_tool_use_id: null,
+      session_id: session,
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            is_error: true,
+            content: "private tool output",
+          },
+        ],
+      },
+    },
+    {
+      type: "assistant",
+      parent_tool_use_id: null,
+      session_id: session,
+      message: {
+        model: "fixture-model",
+        stop_reason: "end_turn",
+        content: [{ type: "text", text: "private answer" }],
+      },
+    },
+    {
+      type: "result",
+      subtype: "success",
+      is_error: false,
+      terminal_reason: "completed",
+      num_turns: 2,
+      duration_ms: 10,
+      duration_api_ms: 8,
+      result: "private answer",
+      stop_reason: "end_turn",
+      total_cost_usd: 0.25,
+      usage: {
+        input_tokens: 11,
+        output_tokens: 7,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+      queued_turn_count: 0,
+      session_id: session,
+    },
+  ];
 }
 
 function remote(code: string): JinushiClientError {

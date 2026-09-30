@@ -1,9 +1,17 @@
 import { randomUUID } from "node:crypto";
 import type {
   ExecutionObserver,
+  ExecutionPort,
+  HarnessDecoder,
+  HarnessPort,
   HarnessSignal,
   ResumeOutcome,
 } from "../contracts/ports.js";
+import {
+  HarnessCapabilityError,
+  type HarnessCapabilities,
+  type HarnessControlOperation,
+} from "../contracts/harness.js";
 import { isObservationGap } from "../contracts/ports.js";
 import type { DurableRunState } from "../contracts/durable.js";
 import type { RuntimeLimits } from "../contracts/limits.js";
@@ -247,11 +255,132 @@ function toJsonObject(value: unknown): JsonObject {
   return JSON.parse(JSON.stringify(value)) as JsonObject;
 }
 
+interface ResolvedAdapter {
+  identity: { name: HarnessName; version: string };
+  capabilities?: HarnessCapabilities;
+  execution: ExecutionPort<unknown>;
+  harness: HarnessPort;
+  validateInput?: (
+    input: RunCreateInput<unknown, HarnessName>,
+    limits: RuntimeLimits,
+  ) => RunCreateInput<unknown, HarnessName>;
+}
+
+const MOCK_IDENTITY = { name: "mock", version: "mock-fixture-v1" } as const;
+
+/** Decoder for a restored run whose harness adapter is not registered. */
+const unavailableDecoder: HarnessDecoder = {
+  push() {
+    throw new Error("Harness adapter is not registered");
+  },
+  finish() {
+    throw new Error("Harness adapter is not registered");
+  },
+};
+
+function validateCapabilities(adapter: ResolvedAdapter): void {
+  const capabilities = adapter.capabilities;
+  if (capabilities === undefined) return;
+  if (
+    capabilities.schemaVersion !== 1 ||
+    capabilities.harness.name !== adapter.identity.name ||
+    capabilities.harness.version !== adapter.identity.version
+  ) {
+    throw new TypeError(
+      `Harness ${adapter.identity.name} capabilities do not match its identity`,
+    );
+  }
+  // The service has no steer/follow-up route; advertising one would be a lie.
+  for (const operation of ["steer", "followUp"] as const) {
+    if (capabilities[operation].tsukai !== "unsupported") {
+      throw new TypeError(
+        `Harness ${adapter.identity.name} advertises ${operation} without a service route`,
+      );
+    }
+  }
+}
+
+function resolveAdapters<Request, Harness extends HarnessName>(
+  options: RunServiceOptions<Request, Harness>,
+): { adapters: Map<HarnessName, ResolvedAdapter>; single: boolean } {
+  const adapters = new Map<HarnessName, ResolvedAdapter>();
+  if (options.adapters !== undefined) {
+    if (
+      options.execution !== undefined ||
+      options.harness !== undefined ||
+      options.harnessIdentity !== undefined ||
+      options.validateInput !== undefined ||
+      options.capabilities !== undefined
+    ) {
+      throw new TypeError(
+        "Pass either harness adapters or a single execution/harness binding",
+      );
+    }
+    if (options.adapters.length === 0) {
+      throw new TypeError("At least one harness adapter is required");
+    }
+    for (const adapter of options.adapters) {
+      const resolved = adapter as unknown as ResolvedAdapter;
+      if (adapters.has(resolved.identity.name)) {
+        throw new TypeError(
+          `Harness ${resolved.identity.name} is registered twice`,
+        );
+      }
+      if (resolved.capabilities === undefined) {
+        throw new TypeError(
+          `Harness ${resolved.identity.name} must advertise capabilities`,
+        );
+      }
+      validateCapabilities(resolved);
+      adapters.set(resolved.identity.name, resolved);
+    }
+    return { adapters, single: false };
+  }
+  if (options.execution === undefined || options.harness === undefined) {
+    throw new TypeError("A single-harness service needs execution and harness");
+  }
+  const identity = options.harnessIdentity ?? MOCK_IDENTITY;
+  const resolved: ResolvedAdapter = {
+    identity: { ...identity },
+    execution: options.execution as ExecutionPort<unknown>,
+    harness: options.harness,
+    ...(options.validateInput === undefined
+      ? {}
+      : {
+          validateInput: options.validateInput as unknown as NonNullable<
+            ResolvedAdapter["validateInput"]
+          >,
+        }),
+    ...(options.capabilities === undefined
+      ? {}
+      : { capabilities: options.capabilities }),
+  };
+  validateCapabilities(resolved);
+  adapters.set(identity.name, resolved);
+  return { adapters, single: true };
+}
+
 export function createRunService<
   Request = RunCreateInput["request"],
   Harness extends HarnessName = "mock",
 >(options: RunServiceOptions<Request, Harness>): RunService<Request, Harness> {
   const limits = resolveLimits(options.limits);
+  const { adapters, single } = resolveAdapters(options);
+  const executions = [
+    ...new Set([...adapters.values()].map((adapter) => adapter.execution)),
+  ];
+  /** The adapter that owns a run. A run never moves to another adapter. */
+  const adapterFor = (run: RunRecord): ResolvedAdapter | undefined => {
+    const adapter = adapters.get(run.harness.name);
+    return adapter !== undefined &&
+      adapter.identity.version === run.harness.version
+      ? adapter
+      : undefined;
+  };
+  const adapterGapReason = (run: RunRecord): string =>
+    adapters.has(run.harness.name)
+      ? "harness-version-mismatch"
+      : "harness-adapter-unavailable";
   const store = options.durableStore;
   if (store !== undefined && options.journal !== store) {
     throw new TypeError(
@@ -510,10 +639,15 @@ export function createRunService<
     ) {
       return;
     }
+    const adapter = adapterFor(run);
+    if (adapter === undefined) {
+      markUncertain(run, adapterGapReason(run));
+      return;
+    }
     run.retirementRequests.add(reason);
     persistSafe(run);
     try {
-      await options.execution.retire(binding.executionRunId, reason);
+      await adapter.execution.retire(binding.executionRunId, reason);
     } catch {
       // An unattached (post-restart) run may retry once it is re-attached.
       if (!run.attached) run.retirementRequests.delete(reason);
@@ -808,6 +942,7 @@ export function createRunService<
 
   const restoreRun = (state: DurableRunState): RunRecord => {
     const snapshot = state.snapshot;
+    const restoredAdapter = adapters.get(snapshot.harness.name);
     const run: RunRecord = {
       agentRunId: snapshot.agentRunId,
       harness: { ...snapshot.harness },
@@ -844,7 +979,7 @@ export function createRunService<
               gaps: snapshot.recovery.gaps.map((gap) => ({ ...gap })),
             },
           }),
-      decoder: options.harness.decoder(),
+      decoder: unavailableDecoder,
       waiters: new Set(),
       ...(state.candidate === undefined
         ? {}
@@ -858,6 +993,12 @@ export function createRunService<
       attached: false,
       persistFailed: false,
     };
+    if (
+      restoredAdapter !== undefined &&
+      restoredAdapter.identity.version === snapshot.harness.version
+    ) {
+      run.decoder = restoredAdapter.harness.decoder();
+    }
     return run;
   };
 
@@ -969,7 +1110,13 @@ export function createRunService<
       ) {
         return;
       }
-      if (options.execution.resume === undefined) {
+      const adapter = adapterFor(run);
+      if (adapter === undefined) {
+        // Never re-attach through a different harness adapter or version.
+        markUncertain(run, adapterGapReason(run));
+        return;
+      }
+      if (adapter.execution.resume === undefined) {
         markUncertain(run, "execution-resume-unsupported");
         return;
       }
@@ -986,7 +1133,7 @@ export function createRunService<
       });
       let outcome: ResumeOutcome;
       try {
-        outcome = await options.execution.resume(
+        outcome = await adapter.execution.resume(
           { ...binding },
           observerFor(run),
           { ...run.cursor },
@@ -1057,16 +1204,53 @@ export function createRunService<
 
   loadDurableRuns();
 
+  /**
+   * Checks a control operation against the run's advertised capabilities
+   * before anything reaches the harness. No adapter routes steer/follow-up, so
+   * the check always ends in an explicit typed failure; nothing is emulated.
+   */
+  const rejectControl = async (
+    agentRunId: string,
+    operation: HarnessControlOperation,
+    message: string,
+  ): Promise<never> => {
+    const run = requireRun(agentRunId);
+    if (
+      typeof message !== "string" ||
+      message.length === 0 ||
+      Buffer.byteLength(message, "utf8") > limits.maxRecordBytes
+    ) {
+      throw new TypeError(`${operation} message must be a bounded string`);
+    }
+    const capability = adapters.get(run.harness.name)?.capabilities?.[
+      operation
+    ];
+    throw new HarnessCapabilityError(
+      run.harness.name,
+      operation,
+      capability?.native ?? "unverified",
+    );
+  };
+
   const service: RunService<Request, Harness> = {
     runs: {
       create: async (input) => {
         if (disposed) throw new Error("Run service has been disposed");
-        const validated = options.validateInput
-          ? options.validateInput(input, limits)
-          : (validateInput(input as RunCreateInput, limits) as RunCreateInput<
-              Request,
-              Harness
-            >);
+        const requested = (input as { harness?: unknown } | null)?.harness;
+        const adapter = single
+          ? [...adapters.values()][0]!
+          : adapters.get(requested as HarnessName);
+        if (adapter === undefined) {
+          throw new UnsupportedBackendError(String(requested));
+        }
+        const validated = (
+          adapter.validateInput
+            ? adapter.validateInput(
+                input as RunCreateInput<unknown, HarnessName>,
+                limits,
+              )
+            : validateInput(input as RunCreateInput, limits)
+        ) as RunCreateInput<Request, Harness>;
         if (runs.size >= limits.maxRuns)
           throw new RangeError("Maximum retained run count reached");
         if (validated.parentRunId !== undefined) {
@@ -1080,10 +1264,7 @@ export function createRunService<
         const createdAt = new Date().toISOString();
         const run: RunRecord = {
           agentRunId,
-          harness: options.harnessIdentity ?? {
-            name: "mock",
-            version: "mock-fixture-v1",
-          },
+          harness: { ...adapter.identity },
           ...(validated.parentRunId === undefined
             ? {}
             : { parentRunId: validated.parentRunId }),
@@ -1111,7 +1292,7 @@ export function createRunService<
           createdAt,
           updatedAt: createdAt,
           completeness: "complete",
-          decoder: options.harness.decoder(),
+          decoder: adapter.harness.decoder(),
           waiters: new Set(),
           retirementRequests: new Set(),
           cancelIntentSeen: false,
@@ -1137,7 +1318,7 @@ export function createRunService<
         }
 
         try {
-          const binding = await options.execution.start(
+          const binding = await adapter.execution.start(
             agentRunId,
             validated.request,
             observerFor(run),
@@ -1293,6 +1474,28 @@ export function createRunService<
         return options.journal.read(agentRunId, afterSeq, limit);
       },
 
+      capabilities: (agentRunId) => {
+        const run = requireRun(agentRunId);
+        const capabilities = adapters.get(run.harness.name)?.capabilities;
+        if (
+          capabilities === undefined ||
+          capabilities.harness.version !== run.harness.version
+        ) {
+          throw new HarnessCapabilityError(
+            run.harness.name,
+            "capabilities",
+            "unverified",
+          );
+        }
+        return structuredClone(capabilities);
+      },
+
+      steer: (agentRunId, message) =>
+        rejectControl(agentRunId, "steer", message),
+
+      followUp: (agentRunId, message) =>
+        rejectControl(agentRunId, "followUp", message),
+
       result: (agentRunId): RunResult => {
         const run = requireRun(agentRunId);
         if (
@@ -1341,7 +1544,10 @@ export function createRunService<
     detach: () => {
       if (detachPromise !== undefined) return detachPromise;
       detachPromise = Promise.resolve()
-        .then(() => options.execution.detach?.())
+        .then(() =>
+          Promise.all(executions.map((execution) => execution.detach?.())),
+        )
+        .then(() => undefined)
         .finally(() => options.journal.close());
       return detachPromise;
     },
@@ -1349,7 +1555,10 @@ export function createRunService<
       if (disposePromise !== undefined) return disposePromise;
       disposed = true;
       disposePromise = Promise.resolve()
-        .then(() => options.execution.dispose())
+        .then(() =>
+          Promise.all(executions.map((execution) => execution.dispose())),
+        )
+        .then(() => undefined)
         .finally(() => options.journal.close());
       return disposePromise;
     },

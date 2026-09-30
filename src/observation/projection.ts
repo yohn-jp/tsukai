@@ -13,6 +13,8 @@ export interface ProjectionProvenance {
   source: "runtime" | "harness" | "execution" | "journal" | "projection";
   eventSeqs: number[];
   explanation: string;
+  /** Harness whose native evidence a harness-sourced value came from. */
+  harness?: RunSnapshot["harness"]["name"];
 }
 
 export type ProjectionMetric =
@@ -628,6 +630,191 @@ function metricsFor(
   };
 }
 
+function claudeCodePayload(
+  event: ObservationEnvelope,
+): Record<string, JsonValue> | undefined {
+  return record(event.payload.claudeCode);
+}
+
+function claudeCodeNative(event: ObservationEnvelope): string | undefined {
+  return stringValue(claudeCodePayload(event)?.nativeType);
+}
+
+/**
+ * Claude Code evidence (stream-json, namespaced under `claudeCode`). Only what
+ * the harness reports is projected: it reports no tool durations or retry
+ * outcomes, so those stay unavailable rather than zero.
+ */
+function claudeCodeMetricsFor(
+  events: readonly ObservationEnvelope[],
+  completeness: "complete" | "incomplete",
+): RunMetrics {
+  const completeEvidence = completeness === "complete";
+  const calls = events.filter(
+    (event) =>
+      event.kind === "harness.tool" && claudeCodeNative(event) === "tool_use",
+  );
+  const errors = events.filter(
+    (event) =>
+      event.kind === "harness.tool" &&
+      claudeCodeNative(event) === "tool_result" &&
+      claudeCodePayload(event)?.isError === true,
+  );
+  const results = events.filter(
+    (event) =>
+      event.kind === "harness.result" && claudeCodeNative(event) === "result",
+  );
+  const tokens = (key: string): ProjectionMetric => {
+    const usable = results
+      .map((event) => ({
+        seq: event.seq,
+        value: numberValue(
+          record(record(claudeCodePayload(event)?.usage)?.values)?.[key],
+        ),
+      }))
+      .filter(
+        (entry): entry is { seq: number; value: number } =>
+          entry.value !== undefined,
+      );
+    if (usable.length === 0)
+      return unavailable(
+        "No authoritative Claude Code result usage was recorded",
+        "harness",
+      );
+    return metric(
+      usable.reduce((sum, entry) => sum + entry.value, 0),
+      "observed",
+      "harness",
+      "harness-reported per-turn result usage",
+      usable.map((entry) => entry.seq),
+    );
+  };
+  const costs = results
+    .map((event) => ({
+      seq: event.seq,
+      value: numberValue(record(claudeCodePayload(event)?.cost)?.total),
+    }))
+    .filter(
+      (entry): entry is { seq: number; value: number } =>
+        entry.value !== undefined,
+    );
+  const retries = events.filter(
+    (event) =>
+      event.kind === "harness.retry" &&
+      claudeCodeNative(event) === "system/api_retry",
+  );
+  const compactions = events.filter(
+    (event) => claudeCodeNative(event) === "system/compact_boundary",
+  );
+  const failedCompactions = events.filter(
+    (event) =>
+      claudeCodeNative(event) === "system/status" &&
+      claudeCodePayload(event)?.compactOutcome === "failed",
+  );
+  return {
+    tool: {
+      calls: metricFromCount(
+        calls.length,
+        completeEvidence,
+        "harness",
+        "Tool call count requires complete harness evidence",
+        calls.map((event) => event.seq),
+      ),
+      errors: metricFromCount(
+        errors.length,
+        completeEvidence && calls.length > 0,
+        "harness",
+        "Tool error count requires tool execution evidence",
+        errors.map((event) => event.seq),
+      ),
+      latencyMs: unavailable(
+        "Claude Code stream-json reports no tool duration",
+        "harness",
+      ),
+      latencySamples: unavailable(
+        "Claude Code stream-json reports no tool duration",
+        "harness",
+      ),
+    },
+    usage: {
+      inputTokens: tokens("input"),
+      outputTokens: tokens("output"),
+      totalTokens: unavailable(
+        "Claude Code reports no total token count",
+        "harness",
+      ),
+      // total_cost_usd is a cumulative estimate: the latest value, not a sum.
+      cost:
+        costs.length === 0
+          ? unavailable("No Claude Code cost estimate was recorded", "harness")
+          : metric(
+              costs.at(-1)!.value,
+              "observed",
+              "harness",
+              "harness-reported cumulative cost estimate",
+              [costs.at(-1)!.seq],
+            ),
+    },
+    retry: {
+      attempts: metricFromCount(
+        retries.length,
+        completeEvidence,
+        "harness",
+        "Retry count requires complete harness evidence",
+        retries.map((event) => event.seq),
+      ),
+      failures: unavailable("Claude Code reports no retry outcome", "harness"),
+    },
+    compaction: {
+      started: metricFromCount(
+        compactions.length,
+        completeEvidence,
+        "harness",
+        "Compaction count requires complete harness evidence",
+        compactions.map((event) => event.seq),
+      ),
+      aborted: metricFromCount(
+        failedCompactions.length,
+        completeEvidence && compactions.length > 0,
+        "harness",
+        "Compaction failure count requires compaction evidence",
+        failedCompactions.map((event) => event.seq),
+      ),
+    },
+  };
+}
+
+function harnessAttributed(
+  value: ProjectionProvenance,
+  harness: RunSnapshot["harness"]["name"] | undefined,
+): ProjectionProvenance {
+  return value.source === "harness" && harness !== undefined
+    ? { ...value, harness }
+    : value;
+}
+
+/** Marks every harness-sourced metric with the run's harness identity. */
+function attributeHarness(
+  metrics: RunMetrics,
+  harness: RunSnapshot["harness"]["name"],
+): RunMetrics {
+  const mark = (value: ProjectionMetric): ProjectionMetric =>
+    value.provenance.source === "harness"
+      ? { ...value, provenance: { ...value.provenance, harness } }
+      : value;
+  const section = <T extends object>(values: T): T => {
+    const copy = { ...values } as Record<string, ProjectionMetric>;
+    for (const key of Object.keys(copy)) copy[key] = mark(copy[key]!);
+    return copy as T;
+  };
+  return {
+    tool: section(metrics.tool),
+    usage: section(metrics.usage),
+    retry: section(metrics.retry),
+    compaction: section(metrics.compaction),
+  };
+}
+
 function eventMetadata(event: ObservationEnvelope): JsonObject {
   return canonicalJson(event.payload) as JsonObject;
 }
@@ -663,6 +850,7 @@ function makeGapFromEvent(
 function makeTimeline(
   events: readonly ObservationEnvelope[],
   gaps: readonly ProjectionGap[],
+  harnesses: ReadonlyMap<string, RunSnapshot["harness"]["name"]>,
 ): TimelineEntry[] {
   const entries: TimelineEntry[] = [];
   for (const event of events) {
@@ -688,11 +876,11 @@ function makeTimeline(
       source: event.source,
       kind: event.kind,
       metadata: eventMetadata(event),
-      provenance: provenance(
-        "observed",
-        event.source,
-        "canonical journal observation",
-        [event.seq],
+      provenance: harnessAttributed(
+        provenance("observed", event.source, "canonical journal observation", [
+          event.seq,
+        ]),
+        harnesses.get(event.runId),
       ),
     });
   }
@@ -830,9 +1018,13 @@ export function projectObservation(input: ProjectionInput): OperatorProjection {
     RunMetrics
   >;
   for (const snapshot of sortedSnapshots) {
-    metrics[snapshot.agentRunId] = metricsFor(
-      snapshotEvents(events, snapshot.agentRunId),
-      runCompleteness[snapshot.agentRunId]!.status,
+    const runEvents = snapshotEvents(events, snapshot.agentRunId);
+    const runStatus = runCompleteness[snapshot.agentRunId]!.status;
+    metrics[snapshot.agentRunId] = attributeHarness(
+      snapshot.harness.name === "claude-code"
+        ? claudeCodeMetricsFor(runEvents, runStatus)
+        : metricsFor(runEvents, runStatus),
+      snapshot.harness.name,
     );
   }
   const status =
@@ -845,7 +1037,16 @@ export function projectObservation(input: ProjectionInput): OperatorProjection {
   return {
     fleet,
     tree: roots,
-    timeline: makeTimeline(events, normalizedGaps),
+    timeline: makeTimeline(
+      events,
+      normalizedGaps,
+      new Map(
+        sortedSnapshots.map((snapshot) => [
+          snapshot.agentRunId,
+          snapshot.harness.name,
+        ]),
+      ),
+    ),
     metrics,
     completeness: { status, runs: runCompleteness },
   };

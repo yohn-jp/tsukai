@@ -11,6 +11,7 @@ import type {
 import type { ExecutionPort, HarnessPort, JournalPort } from "./ports.js";
 import type { RuntimeLimits } from "./limits.js";
 import type { DurableStore } from "./durable.js";
+import type { HarnessAdapter, HarnessCapabilities } from "./harness.js";
 
 export interface RunOperations<
   Request = RunCreateInput["request"],
@@ -35,6 +36,17 @@ export interface RunOperations<
     limit?: number,
   ): ObservationPage;
   result(agentRunId: string): RunResult;
+  /**
+   * Machine-readable capabilities of the run's harness adapter. Throws
+   * `HarnessCapabilityError` when the run's harness advertises none.
+   */
+  capabilities(agentRunId: string): HarnessCapabilities;
+  /**
+   * Capability-checked before anything reaches the harness. Unsupported
+   * operations reject with `HarnessCapabilityError`; nothing is emulated.
+   */
+  steer(agentRunId: string, message: string): Promise<never>;
+  followUp(agentRunId: string, message: string): Promise<never>;
 }
 
 export interface ReconcileReport {
@@ -67,8 +79,16 @@ export interface RunServiceOptions<
   Request = RunCreateInput["request"],
   Harness extends HarnessName = "mock",
 > {
-  execution: ExecutionPort<Request>;
-  harness: HarnessPort;
+  /** Single-harness binding; omit when `adapters` is given. */
+  execution?: ExecutionPort<Request>;
+  harness?: HarnessPort;
+  /**
+   * Multi-harness binding. Each run is bound to the adapter named by its
+   * harness identity for its whole life, including after owner restart.
+   */
+  adapters?: readonly HarnessAdapter<unknown, HarnessName>[];
+  /** Single-harness capabilities; adapters carry their own. */
+  capabilities?: HarnessCapabilities;
   journal: JournalPort;
   durableStore?: DurableStore;
   limits?: Partial<RuntimeLimits>;

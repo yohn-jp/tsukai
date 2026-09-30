@@ -25,6 +25,7 @@ import {
   assertPosix,
   assertPrivateDirectory,
 } from "./security.js";
+import type { HarnessCapabilities } from "../contracts/harness.js";
 
 /** Scoped, agent-facing projection: only the operations of the M3 surface. */
 export interface AgentClient {
@@ -78,6 +79,11 @@ export interface OwnerRunOperations {
     limit?: number,
   ): Promise<ObservationPage>;
   result(agentRunId: string): Promise<RunResult>;
+  /** Machine-readable capabilities of the run's harness adapter. */
+  capabilities(agentRunId: string): Promise<HarnessCapabilities>;
+  /** Rejects with `HARNESS_CAPABILITY_UNSUPPORTED` unless the harness supports it. */
+  steer(agentRunId: string, message: string): Promise<never>;
+  followUp(agentRunId: string, message: string): Promise<never>;
 }
 
 /** Clients are projections: every operation runs in the resident owner. */
@@ -417,6 +423,11 @@ export async function connectOwner(
         ...(afterSeq === undefined ? {} : { afterSeq }),
         ...(limit === undefined ? {} : { limit }),
       }),
+    capabilities: (agentRunId) => call("capabilities", { agentRunId }),
+    steer: (agentRunId, message) =>
+      call("steer", { agentRunId, message }) as Promise<never>,
+    followUp: (agentRunId, message) =>
+      call("follow-up", { agentRunId, message }) as Promise<never>,
   };
 
   return {

@@ -1,11 +1,21 @@
 import { isAbsolute } from "node:path";
 import { createJinushiClient } from "../adapters/jinushi/client.js";
-import { createJinushiPiExecutionPort } from "../adapters/jinushi/execution.js";
 import {
+  createJinushiClaudeCodeExecutionPort,
+  createJinushiPiExecutionPort,
+} from "../adapters/jinushi/execution.js";
+import {
+  createPiHarnessAdapter,
   createPiRuntime,
   SUPPORTED_PI_REVISION,
   SUPPORTED_PI_VERSION,
 } from "../adapters/pi/index.js";
+import {
+  createClaudeCodeHarnessAdapter,
+  SUPPORTED_CLAUDE_CODE_VERSION,
+} from "../adapters/claude-code/index.js";
+import { createHarnessRuntime } from "../adapters/runtime.js";
+import type { HarnessName } from "../contracts/types.js";
 import { connectOwner } from "../owner/client.js";
 import { startResidentOwner } from "../owner/server.js";
 import {
@@ -23,6 +33,8 @@ const VALUE_FLAGS = new Set([
   "--state-dir",
   "--jinushi-state-dir",
   "--pi-executable",
+  "--claude-code-executable",
+  "--harness",
   "--cwd",
   "--parent",
   "--label",
@@ -81,26 +93,51 @@ const print = (value: unknown): void => {
 async function serve(flags: Flags): Promise<void> {
   const jinushiDir = flags.values.get("--jinushi-state-dir");
   const executable = flags.values.get("--pi-executable");
+  const claudeCode = flags.values.get("--claude-code-executable");
   if (jinushiDir === undefined || !isAbsolute(jinushiDir)) {
     throw new Error("--jinushi-state-dir must be an absolute path");
   }
   if (executable === undefined || !isAbsolute(executable)) {
     throw new Error("--pi-executable must be an absolute path");
   }
+  if (claudeCode !== undefined && !isAbsolute(claudeCode)) {
+    throw new Error("--claude-code-executable must be an absolute path");
+  }
   // Production execution is Jinushi-owned; there is no direct-spawn fallback.
+  const piPort = (): ReturnType<typeof createJinushiPiExecutionPort> =>
+    createJinushiPiExecutionPort({
+      client: createJinushiClient(jinushiDir),
+      executable,
+      environment: { mode: "inherit-supervisor" },
+    });
   const owner = await startResidentOwner({
     stateDir: stateDir(flags),
     createService: (store) =>
-      createPiRuntime({
-        execution: createJinushiPiExecutionPort({
-          client: createJinushiClient(jinushiDir),
-          executable,
-          environment: { mode: "inherit-supervisor" },
-        }),
-        piVersion: SUPPORTED_PI_VERSION,
-        piRevision: SUPPORTED_PI_REVISION,
-        durableStore: store,
-      }),
+      claudeCode === undefined
+        ? createPiRuntime({
+            execution: piPort(),
+            piVersion: SUPPORTED_PI_VERSION,
+            piRevision: SUPPORTED_PI_REVISION,
+            durableStore: store,
+          })
+        : createHarnessRuntime({
+            adapters: [
+              createPiHarnessAdapter({
+                execution: piPort(),
+                piVersion: SUPPORTED_PI_VERSION,
+                piRevision: SUPPORTED_PI_REVISION,
+              }),
+              createClaudeCodeHarnessAdapter({
+                execution: createJinushiClaudeCodeExecutionPort({
+                  client: createJinushiClient(jinushiDir),
+                  executable: claudeCode,
+                  environment: { mode: "inherit-supervisor" },
+                }),
+                claudeCodeVersion: SUPPORTED_CLAUDE_CODE_VERSION,
+              }),
+            ],
+            durableStore: store,
+          }),
   });
   print({ ready: true, pid: owner.pid, socketPath: owner.socketPath });
   const stop = (): void => {
@@ -144,9 +181,13 @@ export async function ownerCommand(args: string[]): Promise<void> {
       if (cwd === undefined) throw new Error("--cwd is required");
       const parent = flags.values.get("--parent");
       const label = flags.values.get("--label");
+      const harness = flags.values.get("--harness") ?? "pi";
+      if (harness !== "pi" && harness !== "claude-code") {
+        throw new Error("--harness must be pi or claude-code");
+      }
       print(
         await client.runs.create({
-          harness: "pi",
+          harness: harness as HarnessName,
           request: { prompt: await readStdin() },
           workspace: { cwd },
           ...(parent === undefined ? {} : { parentRunId: parent }),
@@ -159,6 +200,8 @@ export async function ownerCommand(args: string[]): Promise<void> {
       throw new Error(`run ${String(verb)} requires a run id`);
     } else if (verb === "get") {
       print(await client.runs.get(id));
+    } else if (verb === "capabilities") {
+      print(await client.runs.capabilities(id));
     } else if (verb === "result") {
       print(await client.runs.result(id));
     } else if (verb === "grant") {

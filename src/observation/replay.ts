@@ -157,7 +157,9 @@ function validateSnapshot(
     return invalid("run.snapshot runId does not match snapshot.agentRunId");
   if (
     !isRecord(value.harness) ||
-    (value.harness.name !== "mock" && value.harness.name !== "pi")
+    (value.harness.name !== "mock" &&
+      value.harness.name !== "pi" &&
+      value.harness.name !== "claude-code")
   ) {
     return invalid("run.snapshot harness must identify a supported harness");
   }
@@ -279,6 +281,7 @@ function validateSnapshot(
             "sessionId",
             "piVersion",
             "piRevision",
+            "harnessVersion",
           ].includes(key),
       )
     ) {
@@ -327,6 +330,15 @@ function validateSnapshot(
             piRevision: boundedString(
               value.execution.piRevision,
               "snapshot.execution.piRevision",
+              128,
+            ),
+          }),
+      ...(value.execution.harnessVersion === undefined
+        ? {}
+        : {
+            harnessVersion: boundedString(
+              value.execution.harnessVersion,
+              "snapshot.execution.harnessVersion",
               128,
             ),
           }),

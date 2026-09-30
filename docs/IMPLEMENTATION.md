@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-Status: M0, M1a, and M1b are complete. M1b was re-certified by Issue #12 against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` and the published Pi 0.99.1 artifact (evidence in [M1B-JINUSHI.md](M1B-JINUSHI.md)); provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local credentials. M2 (resident ownership, #13) is implemented on its PR branch (see [M2-OWNER.md](M2-OWNER.md)); PR #7 had only established durability/recovery seams. M3 (scoped agent-facing control, #14) is implemented on its PR branch (see [M3-AGENT.md](M3-AGENT.md)). M4 (operator observation projections and replay/profile UI consumers, #15) is implemented on its PR branch (see [M4-OBSERVATION.md](M4-OBSERVATION.md)); M5 and later are not started. M1a's supported Pi is the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
+Status: M0, M1a, and M1b are complete. M1b was re-certified by Issue #12 against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` and the published Pi 0.99.1 artifact (evidence in [M1B-JINUSHI.md](M1B-JINUSHI.md)); provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local credentials. M2 (resident ownership, #13) is implemented on its PR branch (see [M2-OWNER.md](M2-OWNER.md)); PR #7 had only established durability/recovery seams. M3 (scoped agent-facing control, #14) is implemented on its PR branch (see [M3-AGENT.md](M3-AGENT.md)). M4 (operator observation projections and replay/profile UI consumers, #15) is implemented on its PR branch (see [M4-OBSERVATION.md](M4-OBSERVATION.md)). M5 (capability-aware multi-harness adapter contract, #16) is implemented on its PR branch (see [M5-HARNESS.md](M5-HARNESS.md)); M6 is not started. M1a's supported Pi is the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
 
 ## Baseline
 
@@ -17,7 +17,7 @@ M0 did **not** certify live Pi, Jinushi, durable ownership, parent-agent tools, 
 | M2 (implemented, #13) | Resident local owner and durability | Cross-client local IPC, durable registry/journal, restart reconciliation, explicit uncertainty and event gaps |
 | M3 | Agent-facing control surface | Scoped `agent_spawn/status/wait/result/cancel`, parent/child runs, independent child execution |
 | M4 | Operator observability | Fleet/tree/timeline/resource/usage projections and replay/profile UI consumers |
-| M5 | Multi-harness adapters | Additional harnesses behind capability-aware adapters without degrading Pi-native observations to a lowest-common-denominator model |
+| M5 (implemented, #16) | Multi-harness adapters | Additional harnesses behind capability-aware adapters without degrading Pi-native observations to a lowest-common-denominator model |
 | M6 | Mottainai adoption | Mottainai consumes Tsukai as the AgentRun layer; orchestration policy remains outside Tsukai |
 
 Milestones are sequential architectural gates, not permission for one implementation session to run through the whole roadmap.

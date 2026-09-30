@@ -11,7 +11,12 @@ import { join } from "node:path";
 import type { DurableStore } from "../contracts/durable.js";
 import type { RunService } from "../contracts/service.js";
 import type { RunCreateInput } from "../contracts/types.js";
-import { RunNotFoundError, WaitTimeoutError } from "../contracts/types.js";
+import {
+  RunNotFoundError,
+  UnsupportedBackendError,
+  WaitTimeoutError,
+} from "../contracts/types.js";
+import { HarnessCapabilityError } from "../contracts/harness.js";
 import { createFileDurableStore } from "../durable/file-store.js";
 import {
   AGENT_OPERATIONS,
@@ -89,6 +94,12 @@ function classify(error: unknown): { code: OwnerErrorCode; message: string } {
   }
   if (error instanceof RunNotFoundError) {
     return { code: "RUN_NOT_FOUND", message: error.message };
+  }
+  if (error instanceof UnsupportedBackendError) {
+    return { code: "INVALID_REQUEST", message: error.message };
+  }
+  if (error instanceof HarnessCapabilityError) {
+    return { code: "HARNESS_CAPABILITY_UNSUPPORTED", message: error.message };
   }
   if (error instanceof WaitTimeoutError) {
     return { code: "WAIT_TIMEOUT", message: error.message };
@@ -459,6 +470,22 @@ export async function startResidentOwner(
             aborts.delete(abort);
             streams.delete(id);
           }
+          return;
+        }
+        case "capabilities":
+          send({
+            id,
+            ok: true,
+            result: runs.capabilities(text(request.agentRunId, "agentRunId")),
+          });
+          return;
+        case "steer":
+        case "follow-up": {
+          const agentRunId = text(request.agentRunId, "agentRunId");
+          const message = text(request.message, "message", 65_536);
+          await (request.op === "steer"
+            ? runs.steer(agentRunId, message)
+            : runs.followUp(agentRunId, message));
           return;
         }
         case "event-page": {
