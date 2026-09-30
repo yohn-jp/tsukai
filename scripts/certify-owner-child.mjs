@@ -55,8 +55,26 @@ const owner = await startResidentOwner({
       environment: { mode: "inherit-supervisor" },
     });
     return createPiRuntime({
+      // Same port surface as `tsukai owner serve`: a restarted certification
+      // owner must re-attach by Jinushi Run ID exactly like production, or
+      // reconciliation correctly reports `execution-port-cannot-attach`.
       execution: {
+        executionProfile: port.executionProfile,
         open: async (...args) => gateExecution(await port.open(...args)),
+        attach: async (executionRunId, observer, resume, onOpen) => {
+          let gatedExecution;
+          const wrap = (execution) =>
+            (gatedExecution ??= gateExecution(execution));
+          const result = await port.attach(
+            executionRunId,
+            observer,
+            resume,
+            (execution) => onOpen(wrap(execution)),
+          );
+          return result.status === "attached"
+            ? { ...result, execution: wrap(result.execution) }
+            : result;
+        },
         detach: () => port.detach(),
         dispose: () => port.dispose(),
       },

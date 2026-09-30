@@ -11,6 +11,7 @@ import {
   SUPPORTED_PI_VERSION,
   type AgentClient,
   type OwnerClient,
+  type PiDuplexExecutionPort,
   type ResidentOwner,
   type RunSnapshot,
 } from "../../src/index.js";
@@ -28,18 +29,33 @@ function setup(): { dir: string; sup: FakeSupervisor } {
   return { dir: temp.dir, sup: new FakeSupervisor() };
 }
 
-async function boot(dir: string, sup: FakeSupervisor): Promise<ResidentOwner> {
+async function boot(
+  dir: string,
+  sup: FakeSupervisor,
+  options: { attach?: boolean } = {},
+): Promise<ResidentOwner> {
+  const port = (): PiDuplexExecutionPort => {
+    const production = createJinushiPiExecutionPort({
+      client: sup.view(),
+      executable: "/opt/pi/bin/pi",
+      environment: { mode: "replace", set: { PATH: "/usr/bin" } },
+    });
+    if (options.attach !== false) return production;
+    // A port without re-attach: the shape of an owner that cannot gather
+    // authoritative backend evidence for an execution it did not start.
+    return {
+      open: (...args) => production.open(...args),
+      detach: () => production.detach!(),
+      dispose: () => production.dispose(),
+    };
+  };
   const owner = await startResidentOwner({
     stateDir: dir,
     fsync: false,
     reconcileIntervalMs: 0,
     createService: (store) =>
       createPiRuntime({
-        execution: createJinushiPiExecutionPort({
-          client: sup.view(),
-          executable: "/opt/pi/bin/pi",
-          environment: { mode: "replace", set: { PATH: "/usr/bin" } },
-        }),
+        execution: port(),
         piVersion: SUPPORTED_PI_VERSION,
         piRevision: SUPPORTED_PI_REVISION,
         durableStore: store,
@@ -420,6 +436,70 @@ describe("agent-facing control surface", () => {
     expect(sup.runStarts).toBe(starts);
     expect(sup.prompts).toBe(prompts);
     expect(sup.run(execOf(child)).inputCommands).toHaveLength(2);
+  });
+
+  it("drives a cancelled child to terminal after restart only through re-attached evidence", async () => {
+    // Without re-attach there is no authoritative evidence: the waiter
+    // completes on explicit uncertainty and the run is never relabeled.
+    {
+      const { dir, sup } = setup();
+      sup.holdTranscript = true;
+      const first = await boot(dir, sup);
+      const op = await operator(dir);
+      const parent = await root(op, dir);
+      const child = await parent.agent.agent_spawn(childInput);
+      await first.close("detach");
+
+      await boot(dir, sup, { attach: false });
+      expect(await parent.agent.agent_status(child.agentRunId)).toMatchObject({
+        lifecycle: "uncertain",
+        recovery: {
+          state: "uncertain",
+          reason: "execution-port-cannot-attach",
+        },
+      });
+      await parent.agent.agent_cancel(child.agentRunId);
+      const waited = await parent.agent.agent_wait(child.agentRunId, {
+        timeoutMs: 2_000,
+      });
+      expect(waited.lifecycle).toBe("uncertain");
+      expect(waited.outcome).toBeUndefined();
+      expect(waited.receipt).toBeUndefined();
+      expect(sup.run(execOf(child)).state).toBe("running");
+      expect(await parent.agent.agent_result(child.agentRunId)).toEqual({
+        ready: false,
+        agentRunId: child.agentRunId,
+      });
+    }
+    // Re-attached by Jinushi Run ID: the same cancellation settles terminal
+    // with the physical receipt of the same execution.
+    {
+      const { dir, sup } = setup();
+      sup.holdTranscript = true;
+      const first = await boot(dir, sup);
+      const op = await operator(dir);
+      const parent = await root(op, dir);
+      const child = await parent.agent.agent_spawn(childInput);
+      await first.close("detach");
+      const starts = sup.runStarts;
+
+      await boot(dir, sup);
+      expect(await parent.agent.agent_status(child.agentRunId)).toMatchObject({
+        lifecycle: "running",
+        recovery: { state: "attached", epoch: 1 },
+      });
+      await parent.agent.agent_cancel(child.agentRunId);
+      const done = await parent.agent.agent_wait(child.agentRunId, {
+        timeoutMs: 2_000,
+      });
+      expect(done).toMatchObject({
+        lifecycle: "terminal",
+        outcome: "cancelled",
+        recovery: { state: "terminal" },
+        receipt: { executionRunId: execOf(child), status: "exited" },
+      });
+      expect(sup.runStarts).toBe(starts);
+    }
   });
 
   it("keeps uncertainty and gaps visible and never reports them as success", async () => {
