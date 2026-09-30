@@ -58,6 +58,32 @@ export interface ExecutionBinding {
   piRevision?: string;
 }
 
+export type RecoveryState =
+  "none" | "pending" | "reconciling" | "attached" | "terminal" | "uncertain";
+
+/** A preserved interval of evidence that the owner could not observe. */
+export interface RecoveryGap {
+  kind: "event" | "output" | "journal" | "observation";
+  code: string;
+  detectedAt: string;
+}
+
+/**
+ * Restart reconciliation projection. Absent on a run that has never crossed an
+ * owner restart. `gaps` never shrink: lost history stays a gap even after the
+ * current state becomes known.
+ */
+export interface RunRecovery {
+  state: RecoveryState;
+  /** Number of owner restarts that loaded this run. */
+  epoch: number;
+  /** Number of backend reconciliation attempts so far. */
+  attempts: number;
+  reason?: string;
+  gaps: RecoveryGap[];
+  reconciledAt?: string;
+}
+
 export interface RunSnapshot {
   agentRunId: string;
   parentRunId?: string;
@@ -75,6 +101,7 @@ export interface RunSnapshot {
   outcome?: Outcome;
   reason?: string;
   completeness: "complete" | "incomplete";
+  recovery?: RunRecovery;
 }
 
 export type RunResult =

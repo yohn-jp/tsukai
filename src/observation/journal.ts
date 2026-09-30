@@ -60,9 +60,27 @@ function sourceKey(source: string, identity: string): string {
   return `${source}\0${identity}`;
 }
 
+export interface JournalHooks {
+  /**
+   * Called with the final envelope before it is stored or published. Throwing
+   * rejects the append, so a durable journal persists before projecting.
+   */
+  beforeCommit?(envelope: ObservationEnvelope): void;
+}
+
+export interface MemoryJournal extends JournalPort {
+  /** Loads already-persisted history without publishing or persisting it. */
+  restore(
+    runId: string,
+    envelopes: ObservationEnvelope[],
+    lastSeq: number,
+  ): void;
+}
+
 export function createMemoryJournal(
   limits: Partial<RuntimeLimits> = {},
-): JournalPort {
+  hooks: JournalHooks = {},
+): MemoryJournal {
   const resolved = resolveLimits(limits);
   const runs = new Map<string, RunHistory>();
   let ordinal = 0;
@@ -253,6 +271,7 @@ export function createMemoryJournal(
         "RECORD_LIMIT",
       );
     }
+    hooks.beforeCommit?.(envelope);
     const history = existingHistory ?? ensureRun(draft.runId);
     history.lastSeq = seq;
     history.events.push({ envelope, order: ++ordinal });
@@ -382,10 +401,38 @@ export function createMemoryJournal(
     return `${selected.map(({ envelope }) => JSON.stringify(envelope)).join("\n")}\n`;
   };
 
+  const restore = (
+    runId: string,
+    envelopes: ObservationEnvelope[],
+    lastSeq: number,
+  ): void => {
+    assertOpen();
+    const history = ensureRun(runId);
+    for (const envelope of envelopes) {
+      history.events.push({ envelope, order: ++ordinal });
+      if (envelope.sourceIdentity !== undefined) {
+        history.identities.set(
+          sourceKey(envelope.source, envelope.sourceIdentity),
+          envelope,
+        );
+      }
+    }
+    history.lastSeq = Math.max(lastSeq, envelopes.at(-1)?.seq ?? 0);
+    while (history.events.length > resolved.maxHistoryPerRun) {
+      const removed = history.events.shift()!;
+      if (removed.envelope.sourceIdentity !== undefined) {
+        history.identities.delete(
+          sourceKey(removed.envelope.source, removed.envelope.sourceIdentity),
+        );
+      }
+    }
+  };
+
   return {
     append,
     read,
     subscribe,
+    restore,
     export: exportJournal,
     close(): void {
       if (closed) return;
