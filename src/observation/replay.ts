@@ -71,6 +71,7 @@ const SOURCE_NAMES = new Set(["runtime", "harness", "execution"]);
 const SNAPSHOT_KEYS = new Set([
   "agentRunId",
   "parentRunId",
+  "spawnedBy",
   "harness",
   "metadata",
   "workspace",
@@ -216,6 +217,8 @@ function validateSnapshot(
   };
   const parentRunId = optionalString(value, "parentRunId");
   if (parentRunId !== undefined) result.parentRunId = parentRunId;
+  const spawnedBy = optionalString(value, "spawnedBy");
+  if (spawnedBy !== undefined) result.spawnedBy = spawnedBy;
 
   if (value.workspace !== undefined) {
     if (!isRecord(value.workspace))

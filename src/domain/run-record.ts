@@ -22,6 +22,7 @@ export interface RunRecord {
   agentRunId: string;
   harness: { name: HarnessName; version: string };
   parentRunId?: string;
+  spawnedBy?: string;
   metadata: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };
   lifecycle: Lifecycle;
@@ -117,6 +118,7 @@ export function toSnapshot(run: RunRecord): RunSnapshot {
   return {
     agentRunId: run.agentRunId,
     ...(run.parentRunId === undefined ? {} : { parentRunId: run.parentRunId }),
+    ...(run.spawnedBy === undefined ? {} : { spawnedBy: run.spawnedBy }),
     harness: { ...run.harness },
     metadata: { ...run.metadata },
     ...(run.workspace === undefined

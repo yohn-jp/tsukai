@@ -14,6 +14,12 @@ import type { RunCreateInput } from "../contracts/types.js";
 import { RunNotFoundError, WaitTimeoutError } from "../contracts/types.js";
 import { createFileDurableStore } from "../durable/file-store.js";
 import {
+  AGENT_OPERATIONS,
+  createAgentSurface,
+  openAgentGrantStore,
+  type AgentPrincipal,
+} from "./agent.js";
+import {
   createFrameReader,
   DEFAULT_MAX_FRAME_BYTES,
   OWNER_PROTOCOL_VERSION,
@@ -129,6 +135,14 @@ export async function startResidentOwner(
     throw error;
   }
   const canonical: OwnerService = service;
+  const grants = openAgentGrantStore(join(stateDir, "authz"), (runId) => {
+    try {
+      return canonical.runs.get(runId).lifecycle !== "terminal";
+    } catch {
+      return false;
+    }
+  });
+  const agent = createAgentSurface(canonical, grants);
 
   const token = randomBytes(32).toString("hex");
   const tokenBytes = Buffer.from(token, "utf8");
@@ -150,6 +164,8 @@ export async function startResidentOwner(
     }
     sockets.add(socket);
     let authed = false;
+    /** Set for a scoped agent connection; absent means full operator authority. */
+    let principal: AgentPrincipal | undefined;
     let inFlight = 0;
     const aborts = new Set<AbortController>();
     const streams = new Map<number, AbortController>();
@@ -176,14 +192,67 @@ export async function startResidentOwner(
     const fail = (id: number, error: unknown): void =>
       send({ id, ok: false, error: classify(error) });
 
+    const handleAgent = async (
+      request: OwnerRequest,
+      who: AgentPrincipal,
+    ): Promise<void> => {
+      const { id, op } = request;
+      if (op === "agent_spawn") {
+        const spec = request.input;
+        if (spec === null || typeof spec !== "object" || Array.isArray(spec)) {
+          throw new OwnerError("INVALID_REQUEST", "input must be an object");
+        }
+        send({
+          id,
+          ok: true,
+          result: await agent.spawn(who, spec as Record<string, unknown>),
+        });
+        return;
+      }
+      const agentRunId = text(request.agentRunId, "agentRunId");
+      if (op === "agent_status") {
+        send({ id, ok: true, result: agent.status(who, agentRunId) });
+      } else if (op === "agent_result") {
+        send({ id, ok: true, result: agent.result(who, agentRunId) });
+      } else if (op === "agent_cancel") {
+        send({ id, ok: true, result: await agent.cancel(who, agentRunId) });
+      } else {
+        const timeoutMs = optInt(request.timeoutMs, "timeoutMs");
+        if (timeoutMs !== undefined && timeoutMs > MAX_WAIT_TIMEOUT_MS) {
+          throw new OwnerError("INVALID_REQUEST", "timeoutMs is too large");
+        }
+        // Waiter abort or disconnect ends only this wait, never the AgentRun.
+        const abort = new AbortController();
+        aborts.add(abort);
+        streams.set(id, abort);
+        try {
+          send({
+            id,
+            ok: true,
+            result: await agent.wait(who, agentRunId, {
+              signal: abort.signal,
+              ...(timeoutMs === undefined ? {} : { timeoutMs }),
+            }),
+          });
+        } finally {
+          aborts.delete(abort);
+          streams.delete(id);
+        }
+      }
+    };
+
     const handle = async (request: OwnerRequest): Promise<void> => {
       const { id, op } = request;
       if (op === "hello") {
-        const presented = Buffer.from(String(request.token ?? ""), "utf8");
-        if (
-          presented.length !== tokenBytes.length ||
-          !timingSafeEqual(presented, tokenBytes)
-        ) {
+        const presentedText = String(request.token ?? "");
+        const presented = Buffer.from(presentedText, "utf8");
+        const isOperator =
+          presented.length === tokenBytes.length &&
+          timingSafeEqual(presented, tokenBytes);
+        const agentIdentity = isOperator
+          ? undefined
+          : grants.authenticate(presentedText);
+        if (!isOperator && agentIdentity === undefined) {
           send({
             id,
             ok: false,
@@ -193,11 +262,21 @@ export async function startResidentOwner(
           return;
         }
         authed = true;
+        if (agentIdentity !== undefined) {
+          principal = {
+            principalRunId: agentIdentity.principalRunId,
+            hash: agentIdentity.hash,
+          };
+        }
         clearTimeout(hello);
         send({
           id,
           ok: true,
-          result: { protocol: OWNER_PROTOCOL_VERSION, pid: process.pid },
+          result: {
+            protocol: OWNER_PROTOCOL_VERSION,
+            pid: process.pid,
+            role: principal === undefined ? "operator" : "agent",
+          },
         });
         return;
       }
@@ -211,8 +290,63 @@ export async function startResidentOwner(
         return;
       }
       const runs = canonical.runs;
+      if (principal !== undefined) {
+        // A scoped agent connection reaches only its own five operations.
+        if (op === "cancel-request") {
+          streams.get(Number(request.target))?.abort();
+          send({ id, ok: true, result: null });
+          return;
+        }
+        if (!(AGENT_OPERATIONS as readonly string[]).includes(op)) {
+          throw new OwnerError(
+            "FORBIDDEN",
+            "Operation requires operator authority",
+          );
+        }
+        await handleAgent(request, principal);
+        return;
+      }
+      if ((AGENT_OPERATIONS as readonly string[]).includes(op)) {
+        throw new OwnerError(
+          "FORBIDDEN",
+          "Operation requires an agent credential",
+        );
+      }
       switch (op) {
+        case "agent-grant": {
+          const agentRunId = text(request.agentRunId, "agentRunId");
+          if (runs.get(agentRunId).lifecycle === "terminal") {
+            throw new OwnerError(
+              "INVALID_REQUEST",
+              "Cannot grant control to a terminal AgentRun",
+            );
+          }
+          send({
+            id,
+            ok: true,
+            result: { agentRunId, ...grants.issue(agentRunId) },
+          });
+          return;
+        }
+        case "agent-revoke":
+          send({
+            id,
+            ok: true,
+            result: {
+              revoked: grants.revoke(text(request.agentRunId, "agentRunId")),
+            },
+          });
+          return;
         case "create":
+          if (
+            (request.input as { spawnedBy?: unknown } | null)?.spawnedBy !==
+            undefined
+          ) {
+            throw new OwnerError(
+              "INVALID_REQUEST",
+              "spawnedBy is owner-internal",
+            );
+          }
           send({
             id,
             ok: true,
@@ -343,7 +477,12 @@ export async function startResidentOwner(
               pid: process.pid,
               startedAt,
               connections: sockets.size,
-              storeIssues: store.issues(),
+              storeIssues: [
+                ...store.issues(),
+                ...(grants.corrupt === undefined
+                  ? []
+                  : [{ entry: "authz/grants.json", reason: grants.corrupt }]),
+              ],
             },
           });
           return;

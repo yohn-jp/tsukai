@@ -188,11 +188,19 @@ function validateInput(
   ) {
     throw new TypeError("parentRunId must be a non-empty string");
   }
+  const spawnedBy = (input as { spawnedBy?: unknown }).spawnedBy;
+  if (
+    spawnedBy !== undefined &&
+    (typeof spawnedBy !== "string" || spawnedBy !== parentRunId)
+  ) {
+    throw new TypeError("spawnedBy must equal parentRunId");
+  }
 
   const normalized: RunCreateInput = {
     harness: "mock",
     request: request as RunCreateInput["request"],
     ...(parentRunId === undefined ? {} : { parentRunId }),
+    ...(spawnedBy === undefined ? {} : { spawnedBy }),
     metadata,
     ...(workspace === undefined ? {} : { workspace }),
   };
@@ -806,6 +814,9 @@ export function createRunService<
       ...(snapshot.parentRunId === undefined
         ? {}
         : { parentRunId: snapshot.parentRunId }),
+      ...(snapshot.spawnedBy === undefined
+        ? {}
+        : { spawnedBy: snapshot.spawnedBy }),
       metadata: { ...snapshot.metadata },
       ...(snapshot.workspace === undefined
         ? {}
@@ -1076,6 +1087,9 @@ export function createRunService<
           ...(validated.parentRunId === undefined
             ? {}
             : { parentRunId: validated.parentRunId }),
+          ...(validated.spawnedBy === undefined
+            ? {}
+            : { spawnedBy: validated.spawnedBy }),
           metadata: { ...validated.metadata },
           ...(validated.workspace === undefined
             ? {}

@@ -37,6 +37,12 @@ export interface RunCreateInput<
   harness: Harness;
   request: Request;
   parentRunId?: string;
+  /**
+   * Owner-internal: the authenticated principal AgentRun that spawned this run
+   * through the agent-facing surface. Never accepted from clients; it must
+   * equal `parentRunId` and is persisted as authorization metadata.
+   */
+  spawnedBy?: string;
   metadata?: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };
 }
@@ -87,6 +93,8 @@ export interface RunRecovery {
 export interface RunSnapshot {
   agentRunId: string;
   parentRunId?: string;
+  /** Principal AgentRun that spawned this run via agent_spawn (authorization, not lineage). */
+  spawnedBy?: string;
   harness: { name: HarnessName; version: string };
   metadata: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };

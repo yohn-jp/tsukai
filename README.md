@@ -64,6 +64,8 @@ Intent is persisted before any external start and the Jinushi execution binding 
 
 `pnpm run certify:owner` is the live restart certification (real Jinushi supervisor, real Pi 0.99.1, owner killed with SIGKILL and restarted); it reports ENVIRONMENT_BLOCKED when `TSUKAI_JINUSHI_STATE_DIR`, `TSUKAI_JINUSHI_WORKSPACE`, or `TSUKAI_JINUSHI_BIN` are unset.
 
+`agent_spawn/status/wait/result/cancel` (M3, see `docs/M3-AGENT.md`) are scoped projections over the same resident owner via `connectAgent`; `pnpm run certify:agent` is their live lane and reports ENVIRONMENT_BLOCKED under the same conditions.
+
 ## Recording and replay
 
 `tsukai demo` shows multiple mock runs, their events and results, and their relationship. `demo --json` writes one metadata observation envelope per LF-delimited line to stdout. Diagnostics go to stderr. `replay` validates an exported journal and reconstructs its public metadata projection without starting workers. Metadata replay cannot recover discarded result text. Histories and subscriptions have finite limits and expose incomplete history as gaps.

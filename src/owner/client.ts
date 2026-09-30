@@ -25,6 +25,26 @@ import {
   assertPrivateDirectory,
 } from "./security.js";
 
+/** Scoped, agent-facing projection: only the operations of the M3 surface. */
+export interface AgentClient {
+  agent_spawn(
+    input: RunCreateInput<unknown, HarnessName>,
+  ): Promise<RunSnapshot>;
+  agent_status(agentRunId: string): Promise<RunSnapshot>;
+  /** Aborting the signal ends this wait only; it never cancels the AgentRun. */
+  agent_wait(agentRunId: string, options?: WaitOptions): Promise<RunSnapshot>;
+  agent_result(agentRunId: string): Promise<RunResult>;
+  agent_cancel(agentRunId: string): Promise<RunSnapshot>;
+  close(): Promise<void>;
+}
+
+export interface AgentCredential {
+  agentRunId: string;
+  /** Bearer secret, shown once. Only its hash is stored by the owner. */
+  token: string;
+  issuedAt: string;
+}
+
 export interface OwnerStatus {
   protocol: number;
   pid: number;
@@ -59,12 +79,17 @@ export interface OwnerClient {
   runs: OwnerRunOperations;
   reconcile(): Promise<ReconcileReport>;
   status(): Promise<OwnerStatus>;
+  /** Operator-only: (re)issues the scoped agent credential of a nonterminal AgentRun. */
+  grantAgentControl(agentRunId: string): Promise<AgentCredential>;
+  revokeAgentControl(agentRunId: string): Promise<{ revoked: boolean }>;
   /** Drops this connection only. Runs and the owner are unaffected. */
   close(): Promise<void>;
 }
 
 export interface OwnerClientOptions {
   stateDir: string;
+  /** Agent bearer credential; when set, the operator token file is never read. */
+  agentToken?: string;
   connectTimeoutMs?: number;
   maxFrameBytes?: number;
 }
@@ -183,7 +208,7 @@ async function open(options: OwnerClientOptions): Promise<Connection> {
     throw new OwnerError("OWNER_UNAVAILABLE", "Owner endpoint is not a socket");
   }
   assertOwnedPrivate(socketStat, "Owner socket");
-  const token = readToken(stateDir);
+  const token = options.agentToken ?? readToken(stateDir);
   const socket = await new Promise<Socket>((resolve, reject) => {
     const candidate = connect(socketPath);
     const timer = setTimeout(() => {
@@ -210,14 +235,18 @@ async function open(options: OwnerClientOptions): Promise<Connection> {
   return connection;
 }
 
-/**
- * Connects to the resident owner for this state directory. The client
- * reconnects lazily after a lost connection, but never retries `create`: a
- * lost create response must be resolved by listing runs, not by resubmitting.
- */
-export async function connectOwner(
-  options: OwnerClientOptions,
-): Promise<OwnerClient> {
+interface Core {
+  ensure(): Promise<Connection>;
+  call<T>(op: string, args?: Record<string, unknown>): Promise<T>;
+  waitOp(
+    op: "wait" | "agent_wait",
+    agentRunId: string,
+    waitOptions: WaitOptions,
+  ): Promise<RunSnapshot>;
+  close(): void;
+}
+
+async function openCore(options: OwnerClientOptions): Promise<Core> {
   let connection = await open(options);
   let closed = false;
   const ensure = async (): Promise<Connection> => {
@@ -229,9 +258,9 @@ export async function connectOwner(
     op: string,
     args?: Record<string, unknown>,
   ): Promise<T> => {
-    // Every operation except create is idempotent by identity, so one
-    // transparent reconnect after a dropped connection is safe.
-    const retryable = op !== "create";
+    // Every operation except create/agent_spawn is idempotent by identity, so
+    // one transparent reconnect after a dropped connection is safe.
+    const retryable = op !== "create" && op !== "agent_spawn";
     for (let attempt = 0; ; attempt++) {
       try {
         return (await (await ensure()).request(op, args).promise) as T;
@@ -243,6 +272,60 @@ export async function connectOwner(
       }
     }
   };
+  const waitOp = async (
+    op: "wait" | "agent_wait",
+    agentRunId: string,
+    waitOptions: WaitOptions,
+  ): Promise<RunSnapshot> => {
+    const { signal, timeoutMs } = waitOptions;
+    if (signal?.aborted) throw abortError();
+    const active = await ensure();
+    const { id, promise } = active.request(op, {
+      agentRunId,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    });
+    if (signal === undefined) return (await promise) as RunSnapshot;
+    let onAbort: (() => void) | undefined;
+    const aborted = new Promise<never>((_, reject) => {
+      onAbort = (): void => {
+        // Only the waiter ends; the run is untouched.
+        void active
+          .request("cancel-request", { target: id })
+          .promise.catch(() => undefined);
+        reject(abortError());
+      };
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([promise as Promise<RunSnapshot>, aborted]);
+    } finally {
+      if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
+      void promise.catch(() => undefined);
+    }
+  };
+
+  return {
+    ensure,
+    call,
+    waitOp,
+    close: () => {
+      closed = true;
+      connection.close();
+    },
+  };
+}
+
+/**
+ * Connects to the resident owner for this state directory. The client
+ * reconnects lazily after a lost connection, but never retries `create`: a
+ * lost create response must be resolved by listing runs, not by resubmitting.
+ */
+export async function connectOwner(
+  options: OwnerClientOptions,
+): Promise<OwnerClient> {
+  const core = await openCore(options);
+  const { ensure, call } = core;
   const paging = (page?: { cursor?: string; limit?: number }) => ({
     ...(page?.cursor === undefined ? {} : { cursor: page.cursor }),
     ...(page?.limit === undefined ? {} : { limit: page.limit }),
@@ -256,34 +339,8 @@ export async function connectOwner(
       call("children", { parentRunId, ...paging(page) }),
     cancel: (agentRunId) => call("cancel", { agentRunId }),
     result: (agentRunId) => call("result", { agentRunId }),
-    async wait(agentRunId, waitOptions = {}) {
-      const { signal, timeoutMs } = waitOptions;
-      if (signal?.aborted) throw abortError();
-      const active = await ensure();
-      const { id, promise } = active.request("wait", {
-        agentRunId,
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
-      });
-      if (signal === undefined) return (await promise) as RunSnapshot;
-      let onAbort: (() => void) | undefined;
-      const aborted = new Promise<never>((_, reject) => {
-        onAbort = (): void => {
-          // Only the waiter ends; the run is untouched.
-          void active
-            .request("cancel-request", { target: id })
-            .promise.catch(() => undefined);
-          reject(abortError());
-        };
-        if (signal.aborted) onAbort();
-        else signal.addEventListener("abort", onAbort, { once: true });
-      });
-      try {
-        return await Promise.race([promise as Promise<RunSnapshot>, aborted]);
-      } finally {
-        if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
-        void promise.catch(() => undefined);
-      }
-    },
+    wait: (agentRunId, waitOptions = {}) =>
+      core.waitOp("wait", agentRunId, waitOptions),
     events(agentRunId, afterSeq) {
       return {
         [Symbol.asyncIterator]: () => {
@@ -354,10 +411,29 @@ export async function connectOwner(
     runs,
     reconcile: () => call("reconcile"),
     status: () => call("status"),
-    close: async () => {
-      closed = true;
-      connection.close();
-    },
+    grantAgentControl: (agentRunId) => call("agent-grant", { agentRunId }),
+    revokeAgentControl: (agentRunId) => call("agent-revoke", { agentRunId }),
+    close: async () => core.close(),
+  };
+}
+
+/**
+ * Connects with a scoped agent credential. Only the five agent operations are
+ * reachable; the operator token file is never read. `agent_spawn` is not
+ * retried after a lost response (resolve by tracking IDs, never by resubmitting).
+ */
+export async function connectAgent(
+  options: OwnerClientOptions & { agentToken: string },
+): Promise<AgentClient> {
+  const core = await openCore(options);
+  return {
+    agent_spawn: (input) => core.call("agent_spawn", { input }),
+    agent_status: (agentRunId) => core.call("agent_status", { agentRunId }),
+    agent_wait: (agentRunId, waitOptions = {}) =>
+      core.waitOp("agent_wait", agentRunId, waitOptions),
+    agent_result: (agentRunId) => core.call("agent_result", { agentRunId }),
+    agent_cancel: (agentRunId) => core.call("agent_cancel", { agentRunId }),
+    close: async () => core.close(),
   };
 }
 
