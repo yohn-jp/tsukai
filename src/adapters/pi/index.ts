@@ -9,6 +9,7 @@ import type {
   ExecutionPort,
   JournalPort,
 } from "../../contracts/ports.js";
+import type { DurableStore } from "../../contracts/durable.js";
 import type { RunService } from "../../contracts/service.js";
 import type {
   PiDuplexExecution,
@@ -38,6 +39,11 @@ export interface PiRuntimeOptions {
   /** Upstream release commit of the certified published Pi artifact. */
   piRevision: string;
   journal?: JournalPort;
+  /**
+   * Durable registry and metadata-only journal. It is also the journal; passing
+   * a separate `journal` together with it is rejected.
+   */
+  durableStore?: DurableStore;
   limits?: Partial<RuntimeLimits>;
   commandTimeoutMs?: number;
 }
@@ -141,7 +147,15 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
     throw new RangeError("commandTimeoutMs must be positive and finite");
   }
   const active = new Map<string, ActivePi>();
-  const journal = options.journal ?? createMemoryJournal(limits);
+  if (
+    options.durableStore !== undefined &&
+    options.journal !== undefined &&
+    options.journal !== options.durableStore
+  ) {
+    throw new TypeError("durableStore is also the journal; do not pass both");
+  }
+  const journal =
+    options.durableStore ?? options.journal ?? createMemoryJournal(limits);
   let disposed = false;
 
   const execution: ExecutionPort<PiRunRequest> = {
@@ -588,6 +602,9 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
     execution,
     harness: createPiHarness(limits),
     journal,
+    ...(options.durableStore === undefined
+      ? {}
+      : { durableStore: options.durableStore }),
     limits,
     harnessIdentity: { name: "pi", version: options.piVersion },
     validateInput: validatePiInput,

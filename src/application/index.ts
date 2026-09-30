@@ -267,7 +267,14 @@ export function createRunService<
     run: RunRecord,
     draft: Omit<ObservationDraft, "runId">,
   ): void => {
-    options.journal.append({ runId: run.agentRunId, ...draft });
+    try {
+      options.journal.append({ runId: run.agentRunId, ...draft });
+    } catch {
+      // A failed record is not a successful record: flag the run instead of
+      // letting an observer callback take the owner down.
+      run.persistFailed = true;
+      if (run.lifecycle !== "terminal") run.completeness = "incomplete";
+    }
   };
 
   const appendSnapshot = (run: RunRecord): void => {
@@ -966,7 +973,16 @@ export function createRunService<
       if (isTerminal(run)) return;
       if (outcome.status === "attached") {
         run.attached = true;
-        // A stdout gap can leave the decoder without the evidence to classify.
+        if (run.outcomeCandidate !== undefined && run.receipt === undefined) {
+          // Finish the persisted decision; closing input is idempotent and
+          // physical retirement does not depend on lost observation history.
+          run.retirementRequests.clear();
+          void requestRetirement(
+            run,
+            run.outcomeCandidate.outcome === "cancelled" ? "cancel" : "settled",
+          );
+        }
+        // A gap can leave the decoder without the evidence to classify.
         if (run.lifecycle === "uncertain" && run.recovery?.gaps.length) return;
         if (
           outcome.physical === "running" &&
@@ -992,14 +1008,6 @@ export function createRunService<
               reconciledAt: new Date().toISOString(),
             },
           });
-        }
-        if (run.outcomeCandidate !== undefined && run.receipt === undefined) {
-          // Finish the persisted decision; closing input is idempotent.
-          run.retirementRequests.clear();
-          await requestRetirement(
-            run,
-            run.outcomeCandidate.outcome === "cancelled" ? "cancel" : "settled",
-          );
         }
         return;
       }

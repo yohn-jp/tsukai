@@ -28,3 +28,5 @@ export {
   importJournal,
   replayJournal,
 } from "./observation/index.js";
+export { createFileDurableStore } from "./durable/file-store.js";
+export type { FileDurableStoreOptions } from "./durable/file-store.js";
