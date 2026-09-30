@@ -75,8 +75,8 @@ assert.equal(typeof createPiRuntime, 'function');
 assert.equal(typeof createJinushiClient, 'function');
 assert.equal(typeof createJinushiPiExecutionPort, 'function');
 assert.equal(typeof createPiCertificationExecutionPort, 'function');
-assert.equal(SUPPORTED_PI_VERSION, '0.87.1');
-assert.equal(SUPPORTED_PI_REVISION, '2b0a123de98318c2ff8069661721ce0c3794c34e');
+assert.equal(SUPPORTED_PI_VERSION, '0.99.1');
+assert.equal(SUPPORTED_PI_REVISION, 'd86654abb8862e201933517d6f1fce9f88dd117f');
 assert.equal(journal.read('missing').items.length, 0);
 const runtime = createMockRuntime();
 try {

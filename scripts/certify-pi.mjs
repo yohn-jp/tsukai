@@ -1,7 +1,4 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { isAbsolute, relative } from "node:path";
 import {
   createPiRuntime,
   SUPPORTED_PI_REVISION,
@@ -9,9 +6,10 @@ import {
 } from "../dist/index.js";
 import { createPiRpcClient } from "../dist/adapters/pi/protocol.js";
 import { createPiCertificationExecutionPort } from "../dist/testing/index.js";
+import { resolveCertifiedPi } from "./pi-artifact.mjs";
 
-const executable = process.env.TSUKAI_PI_EXECUTABLE;
-const sourceDir = process.env.TSUKAI_PI_SOURCE_DIR;
+let executable;
+let provenance;
 const provider = process.env.TSUKAI_PI_LIVE_PROVIDER;
 const model = process.env.TSUKAI_PI_LIVE_MODEL;
 
@@ -52,6 +50,7 @@ async function certifyTransport() {
         status: "PASSED",
         piVersion: SUPPORTED_PI_VERSION,
         piRevision: SUPPORTED_PI_REVISION,
+        ...provenance,
         sessionId: response.data.sessionId,
         exitCode: receipt.exitCode,
       }),
@@ -131,49 +130,21 @@ async function certifyLivePrompt() {
 }
 
 try {
-  assert(
-    executable && sourceDir,
-    "Set TSUKAI_PI_EXECUTABLE and TSUKAI_PI_SOURCE_DIR to the fixed upstream build",
-  );
-  const sourceRoot = realpathSync(sourceDir);
-  const actualExecutable = realpathSync(executable);
-  const executableWithinSource = relative(sourceRoot, actualExecutable);
-  assert(
-    executableWithinSource &&
-      !executableWithinSource.startsWith("..") &&
-      !isAbsolute(executableWithinSource),
-    "Pi executable must be inside the fixed upstream checkout",
-  );
-  const sourceRevision = execFileSync(
-    "git",
-    ["-C", sourceRoot, "rev-parse", "HEAD"],
-    { encoding: "utf8", timeout: 10_000 },
-  ).trim();
-  assert.equal(
-    sourceRevision,
-    SUPPORTED_PI_REVISION,
-    "Pi source revision is unsupported",
-  );
-  const trackedChanges = execFileSync(
-    "git",
-    ["-C", sourceRoot, "status", "--porcelain", "--untracked-files=no"],
-    { encoding: "utf8", timeout: 10_000 },
-  ).trim();
-  assert.equal(trackedChanges, "", "Pi source checkout must be clean");
-  const version = execFileSync(executable, ["--version"], {
-    encoding: "utf8",
-    timeout: 10_000,
-  }).trim();
-  assert.equal(
-    version,
+  ({ executable, provenance } = resolveCertifiedPi(
     SUPPORTED_PI_VERSION,
-    "Installed Pi version is unsupported",
-  );
+    process.env.TSUKAI_PI_EXECUTABLE,
+  ));
   await certifyTransport();
   await certifyLivePrompt();
 } catch (error) {
   console.error(
-    `Pi certification failed: ${error instanceof Error ? error.name : "unknown error"}`,
+    `Pi certification failed: ${
+      error instanceof assert.AssertionError
+        ? error.message
+        : error instanceof Error
+          ? error.name
+          : "unknown error"
+    }`,
   );
   process.exitCode = 1;
 }

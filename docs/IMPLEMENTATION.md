@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-Status: M0 and M1a are merged on `main`. The current implementation scope is M1b, bounded by the current Jinushi protocol and the contract freeze in [M1B-JINUSHI.md](M1B-JINUSHI.md). `docs/ARCHITECTURE.md` remains the product-semantics authority.
+Status: M0 and M1a are merged on `main`. The current implementation scope is M1b, bounded by the current Jinushi protocol and the contract freeze in [M1B-JINUSHI.md](M1B-JINUSHI.md). Issue #11 refreshes M1a's supported Pi from the 0.87.1 source-checkout build to the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
 
 ## Baseline
 
@@ -44,6 +44,20 @@ The M1a implementation must re-read the then-current upstream Pi RPC documentati
 - closing stdin requests orderly Pi shutdown; process exit remains physical evidence, not semantic task success.
 
 Do not copy private Pi source or freeze undocumented internals. If the installed/upstream protocol materially contradicts this document, stop with a concrete contract blocker rather than inventing compatibility behavior.
+
+### M1a Pi 0.99.1 refresh
+
+The original M1a certification pinned upstream source revision `2b0a123de98318c2ff8069661721ce0c3794c34e` (package metadata 0.87.1) because the published npm 0.87.1 build lacked `prompt.data.disposition`. That source-checkout requirement is obsolete.
+
+Issue #11 re-read Pi tag `v0.99.1` (commit `d86654abb8862e201933517d6f1fce9f88dd117f`) and the published `@earendil-works/pi-coding-agent@0.99.1` artifact (registry integrity `sha512-cWUrTOqA5M73cOYMgsh9PlhDrsBhavd+n5kVY6F7BGbGl1RjqCteVCoeVMVqhngoGACVDyw1tbLjajL8l9jrHg==`, `gitHead` equal to the tag commit). Its exported RPC types and RPC mode implementation provide `prompt` responses with `data.disposition` of `started`, `queued`, or `handled`, a field-less `agent_settled` event after automatic continuation ends, delta-only `message_update` records, and a `system` message before the user message in each run. None of these contradict this document.
+
+- `SUPPORTED_PI_VERSION` is `0.99.1`; `SUPPORTED_PI_REVISION` is the audited tag commit.
+- The exact published artifact is an exact-version development dependency. Credential-free certification verifies the lockfile integrity, the installed artifact file digest, and `pi --version`, then performs real `get_state`, records the Pi session ID, closes stdin, and proves process exit.
+- Deterministic transcript fixtures under `test/pi/fixtures/pi-0.99.1/` were captured from that executable with a credential-free local faux provider; they cover normal success, explicit provider error, and abort.
+- Tsukai keeps its independent byte-oriented RPC client and injected execution/transport port. Pi's spawning `RpcClient` is not used for production execution.
+- The repository's pull-request and `main` checks use the shared `yohn-jp/.github` TypeScript CLI CI workflow, with `test:package` as the package conformance script.
+
+Provider-backed prompt certification remains opt-in and is reported ENVIRONMENT_BLOCKED when provider credentials or model access are unavailable.
 
 ## M1a architecture
 
