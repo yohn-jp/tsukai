@@ -8,10 +8,15 @@ import {
 } from "../adapters/pi/index.js";
 import { connectOwner } from "../owner/client.js";
 import { startResidentOwner } from "../owner/server.js";
+import {
+  collectLiveProjection,
+  renderOperatorProjection,
+} from "../observation/index.js";
 
 interface Flags {
   positional: string[];
   values: Map<string, string>;
+  booleans: Set<string>;
 }
 
 const VALUE_FLAGS = new Set([
@@ -25,11 +30,19 @@ const VALUE_FLAGS = new Set([
 ]);
 
 function parse(args: string[]): Flags {
-  const flags: Flags = { positional: [], values: new Map() };
+  const flags: Flags = {
+    positional: [],
+    values: new Map(),
+    booleans: new Set(),
+  };
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!;
     if (!arg.startsWith("--")) {
       flags.positional.push(arg);
+      continue;
+    }
+    if (arg === "--json") {
+      flags.booleans.add(arg);
       continue;
     }
     if (!VALUE_FLAGS.has(arg)) throw new Error(`Unknown option ${arg}`);
@@ -98,8 +111,24 @@ async function serve(flags: Flags): Promise<void> {
   process.once("SIGINT", stop);
 }
 
+async function observe(flags: Flags): Promise<void> {
+  const client = await connectOwner({ stateDir: stateDir(flags) });
+  try {
+    process.stdout.write(
+      renderOperatorProjection(
+        await collectLiveProjection(client.runs),
+        flags.booleans.has("--json") ? "json" : "text",
+      ),
+    );
+  } finally {
+    await client.close();
+  }
+}
+
 export async function ownerCommand(args: string[]): Promise<void> {
-  const [group, verb, ...rest] = args;
+  const [group, ...groupRest] = args;
+  if (group === "observe") return observe(parse(groupRest));
+  const [, verb, ...rest] = args;
   const flags = parse(rest);
   if (group === "owner" && verb === "serve") return serve(flags);
   const client = await connectOwner({ stateDir: stateDir(flags) });

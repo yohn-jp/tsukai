@@ -461,6 +461,20 @@ export async function startResidentOwner(
           }
           return;
         }
+        case "event-page": {
+          const afterSeq = optInt(request.afterSeq, "afterSeq");
+          const limit = optInt(request.limit, "limit");
+          send({
+            id,
+            ok: true,
+            result: runs.eventsPage(
+              text(request.agentRunId, "agentRunId"),
+              afterSeq,
+              limit,
+            ),
+          });
+          return;
+        }
         case "cancel-request":
           streams.get(Number(request.target))?.abort();
           send({ id, ok: true, result: null });
