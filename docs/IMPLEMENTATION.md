@@ -1,6 +1,6 @@
 # Implementation roadmap
 
-Status: M0, M1a, and M1b are complete. M1b was re-certified by Issue #12 against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` and the published Pi 0.99.1 artifact (evidence in [M1B-JINUSHI.md](M1B-JINUSHI.md)); provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local credentials. M2 (resident ownership, #13) is implemented on its PR branch (see [M2-OWNER.md](M2-OWNER.md)); PR #7 had only established durability/recovery seams. M3 (scoped agent-facing control, #14) is implemented on its PR branch (see [M3-AGENT.md](M3-AGENT.md)). M4 (operator observation projections and replay/profile UI consumers, #15) is implemented on its PR branch (see [M4-OBSERVATION.md](M4-OBSERVATION.md)). M5 (capability-aware multi-harness adapter contract, #16) is implemented on its PR branch (see [M5-HARNESS.md](M5-HARNESS.md)); M6 is not started. M1a's supported Pi is the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
+Status: M0, M1a, and M1b are complete. M1b was re-certified by Issue #12 against Jinushi `main@3db1f2ac953e5646e433e180f17150556c308eff` and the published Pi 0.99.1 artifact (evidence in [M1B-JINUSHI.md](M1B-JINUSHI.md)); provider-backed semantic certification remains ENVIRONMENT_BLOCKED without local credentials. M2 (resident ownership, #13) is implemented on its PR branch (see [M2-OWNER.md](M2-OWNER.md)); PR #7 had only established durability/recovery seams. M3 (scoped agent-facing control, #14) is implemented on its PR branch (see [M3-AGENT.md](M3-AGENT.md)). M4 (operator observation projections and replay/profile UI consumers, #15) is implemented on its PR branch (see [M4-OBSERVATION.md](M4-OBSERVATION.md)). M5 (capability-aware multi-harness adapter contract, #16) is implemented on its PR branch (see [M5-HARNESS.md](M5-HARNESS.md)). The M6 (#17) preflight found that Mottainai cannot adopt Tsukai while runs are fixed to no tools/no extensions with a prompt-only request; M5.5 (admitted immutable harness execution profiles, #25) is that prerequisite and is implemented on its PR branch (see [M5.5-PROFILE.md](M5.5-PROFILE.md)). M6 is not complete. M1a's supported Pi is the published `@earendil-works/pi-coding-agent@0.99.1` npm artifact (see [M1a Pi 0.99.1 refresh](#m1a-pi-0991-refresh)). `docs/ARCHITECTURE.md` remains the product-semantics authority.
 
 ## Baseline
 
@@ -18,6 +18,7 @@ M0 did **not** certify live Pi, Jinushi, durable ownership, parent-agent tools, 
 | M3 | Agent-facing control surface | Scoped `agent_spawn/status/wait/result/cancel`, parent/child runs, independent child execution |
 | M4 | Operator observability | Fleet/tree/timeline/resource/usage projections and replay/profile UI consumers |
 | M5 (implemented, #16) | Multi-harness adapters | Additional harnesses behind capability-aware adapters without degrading Pi-native observations to a lowest-common-denominator model |
+| M5.5 (implemented, #25) | Admitted execution profiles | Caller-admitted provider/model/tools/extensions validated, bound immutably, projected into the Jinushi-submitted harness invocation, durable across restart; default deny without a profile |
 | M6 | Mottainai adoption | Mottainai consumes Tsukai as the AgentRun layer; orchestration policy remains outside Tsukai |
 
 Milestones are sequential architectural gates, not permission for one implementation session to run through the whole roadmap.
@@ -225,4 +226,5 @@ The original M1b implementation was integrated against Jinushi `90e52ca` while r
 - M3 may expose parent-agent tools but lineage alone never grants authorization.
 - M4 is a projection/consumer layer and cannot become a second lifecycle authority.
 - M5 adapters advertise capabilities; Pi-native evidence is not discarded merely because another harness lacks an equivalent event.
+- M5.5 lets the caller admit execution configuration; Tsukai validates, binds, and projects it but never chooses policy, and the profile never widens the admitted workspace.
 - M6 removes duplicate AgentRun responsibility from Mottainai rather than copying orchestration policy into Tsukai.

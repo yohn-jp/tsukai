@@ -44,6 +44,7 @@
     "certify:owner": "pnpm run build && node scripts/certify-owner.mjs",
     "certify:agent": "pnpm run build && node scripts/certify-agent.mjs",
     "certify:harness": "pnpm run build && node scripts/certify-harness.mjs",
+    "certify:profile": "pnpm run build && node scripts/certify-profile.mjs",
     "test:harness": "vitest run test/harness test/claude-code --passWithNoTests"
   },
   "devDependencies": {

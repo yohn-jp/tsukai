@@ -7,6 +7,7 @@ import type {
 } from "./pi.js";
 import type { ExecutionPort, HarnessPort } from "./ports.js";
 import type { HarnessName, RunCreateInput } from "./types.js";
+import type { ExecutionProfileCapabilities } from "./profile.js";
 
 /**
  * Harness-neutral names for the byte-duplex execution seam first introduced
@@ -101,6 +102,8 @@ export interface HarnessCapabilities {
     /** Owner restart re-attaches by execution identity and cursor. */
     reattach: "output-replay" | "unsupported";
   };
+  /** Which execution-profile dimensions Tsukai validates and projects. */
+  executionProfile: ExecutionProfileCapabilities;
 }
 
 export type HarnessControlOperation = "steer" | "followUp";

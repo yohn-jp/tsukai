@@ -13,6 +13,7 @@ import type {
   SemanticState,
 } from "../contracts/types.js";
 import { isRecord } from "../observation/json.js";
+import { parseEffectiveExecutionProfile } from "../domain/execution-profile.js";
 
 export class DurableStateError extends Error {
   constructor(message: string) {
@@ -228,6 +229,18 @@ function parseSnapshot(value: unknown): RunSnapshot {
       cwd: str(workspace.cwd, "snapshot.workspace.cwd"),
       ...(workspaceSessionId === undefined ? {} : { workspaceSessionId }),
     };
+  }
+  if (record.executionProfile !== undefined) {
+    // The fingerprint is compared at reconciliation, where a mismatch becomes
+    // explicit `execution-profile-drift` uncertainty instead of a lost run.
+    try {
+      snapshot.executionProfile = parseEffectiveExecutionProfile(
+        record.executionProfile,
+        false,
+      );
+    } catch (error) {
+      bad(error instanceof Error ? error.message : "executionProfile");
+    }
   }
   if (record.execution !== undefined)
     snapshot.execution = parseBinding(record.execution);

@@ -1,3 +1,4 @@
+import { cloneEffectiveProfile } from "../domain/execution-profile.js";
 import type {
   JsonObject,
   JsonValue,
@@ -50,6 +51,8 @@ export interface FleetRun {
   harness: RunSnapshot["harness"];
   metadata: Record<string, string>;
   workspace?: RunSnapshot["workspace"];
+  /** Safe effective execution profile; absent means default deny. */
+  executionProfile?: RunSnapshot["executionProfile"];
   execution?: RunSnapshot["execution"];
   receipt?: RunSnapshot["receipt"];
   recovery?: RunSnapshot["recovery"];
@@ -391,6 +394,11 @@ function toFleetRun(
     ...(snapshot.workspace === undefined
       ? {}
       : { workspace: { ...snapshot.workspace } }),
+    ...(snapshot.executionProfile === undefined
+      ? {}
+      : {
+          executionProfile: cloneEffectiveProfile(snapshot.executionProfile),
+        }),
     ...(snapshot.execution === undefined
       ? {}
       : { execution: { ...snapshot.execution } }),

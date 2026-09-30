@@ -24,6 +24,8 @@ import { createMemoryJournal } from "../../observation/journal.js";
 import { validatePromptRunInput } from "../prompt-input.js";
 import { createClaudeCodeClient, type ClaudeCodeClient } from "./protocol.js";
 import { CLAUDE_CODE_NAMESPACE, createClaudeCodeHarness } from "./semantic.js";
+import { capabilitiesForPort } from "../profile.js";
+import { CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES } from "./profile.js";
 
 /**
  * Claude Code CLI version whose headless stream-json protocol was verified
@@ -68,6 +70,7 @@ export const CLAUDE_CODE_CAPABILITIES: Readonly<HarnessCapabilities> =
       compaction: "reported",
     },
     recovery: { reattach: "output-replay" },
+    executionProfile: CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES,
   } satisfies HarnessCapabilities) as Readonly<HarnessCapabilities>;
 
 export interface ClaudeCodeHarnessAdapterOptions {
@@ -198,8 +201,16 @@ export function createClaudeCodeHarnessAdapter(
   };
 
   const execution: ExecutionPort<ClaudeCodeRunRequest> = {
-    async start(agentRunId, request, observer, workspace) {
+    async start(agentRunId, request, observer, workspace, profile) {
       if (disposed) throw new Error("Claude Code runtime has been disposed");
+      if (
+        profile !== undefined &&
+        options.execution.executionProfile !== "projected"
+      ) {
+        throw new Error(
+          "Claude Code execution port cannot project an execution profile",
+        );
+      }
       let client: ClaudeCodeClient | undefined;
       let failed = false;
       let exited = false;
@@ -250,7 +261,12 @@ export function createClaudeCodeHarnessAdapter(
           });
         },
       };
-      transport = await options.execution.open(agentRunId, wire, workspace);
+      transport = await options.execution.open(
+        agentRunId,
+        wire,
+        workspace,
+        ...(profile === undefined ? [] : [profile]),
+      );
       const opened = transport;
       try {
         // The backend identity is durable before the prompt can be written.
@@ -446,7 +462,7 @@ export function createClaudeCodeHarnessAdapter(
   return {
     identity: { name: "claude-code", version: options.claudeCodeVersion },
     capabilities: structuredClone(
-      CLAUDE_CODE_CAPABILITIES,
+      capabilitiesForPort(CLAUDE_CODE_CAPABILITIES, options.execution),
     ) as HarnessCapabilities,
     execution,
     harness: createClaudeCodeHarness(limits),
@@ -489,3 +505,5 @@ export function createClaudeCodeRuntime(
     journal,
   };
 }
+
+export { CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES } from "./profile.js";

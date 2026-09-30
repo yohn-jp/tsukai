@@ -27,6 +27,11 @@ import type { ResumeOutcome } from "../../contracts/ports.js";
 import { createMemoryJournal } from "../../observation/journal.js";
 import { createPiRpcClient, type PiRpcClient } from "./protocol.js";
 import { createPiHarness } from "./semantic.js";
+import { capabilitiesForPort } from "../profile.js";
+import {
+  PI_EXECUTION_PROFILE_CAPABILITIES,
+  piModelMatches,
+} from "./profile.js";
 
 /** Published `@earendil-works/pi-coding-agent` npm version certified for Pi RPC. */
 export const SUPPORTED_PI_VERSION = "0.99.1";
@@ -57,6 +62,7 @@ export const PI_CAPABILITIES: Readonly<HarnessCapabilities> = Object.freeze({
     compaction: "reported",
   },
   recovery: { reattach: "output-replay" },
+  executionProfile: PI_EXECUTION_PROFILE_CAPABILITIES,
 } satisfies HarnessCapabilities) as Readonly<HarnessCapabilities>;
 
 export interface PiRuntimeOptions {
@@ -129,8 +135,17 @@ export function createPiHarnessAdapter(
       request,
       observer: ExecutionObserver,
       workspace,
+      profile,
     ): Promise<ExecutionBinding> {
       if (disposed) throw new Error("Pi runtime has been disposed");
+      if (
+        profile !== undefined &&
+        options.execution.executionProfile !== "projected"
+      ) {
+        throw new Error(
+          "Pi execution port cannot project an execution profile",
+        );
+      }
       let client: PiRpcClient | undefined;
       let transport: PiDuplexExecution | undefined;
       let exited = false;
@@ -208,6 +223,7 @@ export function createPiHarnessAdapter(
         agentRunId,
         wireObserver,
         workspace,
+        ...(profile === undefined ? [] : [profile]),
       );
       const opened = transport;
       try {
@@ -313,6 +329,53 @@ export function createPiHarnessAdapter(
               },
             },
           });
+          if (profile !== undefined) {
+            // The admitted model must be the one Pi actually selected; Pi's
+            // fuzzy/`:thinking` resolution never silently substitutes it.
+            const reported =
+              data && typeof data === "object" && "model" in data
+                ? (data as { model: unknown }).model
+                : undefined;
+            const matches = piModelMatches(profile.effective, reported);
+            const model =
+              reported && typeof reported === "object"
+                ? (reported as { provider?: unknown; id?: unknown })
+                : {};
+            observer.onSignal?.({
+              type: "observation",
+              draft: {
+                source: "harness",
+                kind: "harness.profile",
+                sourceIdentity: "pi:profile",
+                payload: {
+                  fingerprint: profile.effective.fingerprint,
+                  modelVerified:
+                    profile.effective.model === undefined
+                      ? "not-requested"
+                      : matches
+                        ? "exact"
+                        : "mismatch",
+                  ...(typeof model.provider === "string" &&
+                  Buffer.byteLength(model.provider, "utf8") <= 128
+                    ? { reportedProvider: model.provider }
+                    : {}),
+                  ...(typeof model.id === "string" &&
+                  Buffer.byteLength(model.id, "utf8") <= 256
+                    ? { reportedModel: model.id }
+                    : {}),
+                },
+              },
+            });
+            if (!matches) {
+              // No prompt is written under a model other than the admitted one.
+              observer.onSignal?.({
+                type: "settlement",
+                status: "error",
+                reason: "pi-model-mismatch",
+              });
+              return;
+            }
+          }
           observer.onDispatch?.("requested"); // durable before the write
           const response = await client!.request(
             { type: "prompt", message: request.prompt },
@@ -576,7 +639,9 @@ export function createPiHarnessAdapter(
 
   return {
     identity: { name: "pi", version: options.piVersion },
-    capabilities: structuredClone(PI_CAPABILITIES) as HarnessCapabilities,
+    capabilities: structuredClone(
+      capabilitiesForPort(PI_CAPABILITIES, options.execution),
+    ) as HarnessCapabilities,
     execution,
     harness: createPiHarness(limits),
     validateInput: validatePiInput,
@@ -616,3 +681,8 @@ export function createPiRuntime(options: PiRuntimeOptions): PiRuntime {
     journal,
   };
 }
+
+export {
+  PI_BUILTIN_TOOLS,
+  PI_EXECUTION_PROFILE_CAPABILITIES,
+} from "./profile.js";

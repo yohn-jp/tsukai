@@ -6,6 +6,7 @@ import type {
   PhysicalReceipt,
   RunCreateInput,
 } from "./types.js";
+import type { AdmittedExecutionProfile } from "./profile.js";
 
 /** An execution error that identifies lost (not merely delayed) evidence. */
 export interface ObservationGapError extends Error {
@@ -68,6 +69,8 @@ export interface ExecutionPort<Request = RunCreateInput["request"]> {
     request: Request,
     observer: ExecutionObserver,
     workspace?: { cwd: string; workspaceSessionId?: string },
+    /** Admitted by the service against the adapter's capabilities. */
+    profile?: AdmittedExecutionProfile,
   ): Promise<ExecutionBinding>;
   /**
    * Re-attach to an existing execution by backend identity and cursor. It must

@@ -271,6 +271,15 @@ export function createAgentSurface(
       ) {
         throw forbidden();
       }
+      // An execution profile is operator-admitted policy. A scoped agent
+      // cannot confer one (its children keep default deny), and a supplied
+      // profile is refused rather than silently dropped.
+      if (request.executionProfile !== undefined) {
+        throw new OwnerError(
+          "FORBIDDEN",
+          "An agent cannot admit an execution profile for a child run",
+        );
+      }
       // Tsukai is not a workspace authority: a child may carry exactly the
       // scope the owner already admitted for its parent, never a different or
       // wider one. Anything else needs external (Nawabari) admission through

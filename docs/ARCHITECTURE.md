@@ -92,6 +92,8 @@ The package may expose a service factory with injected execution, harness, and s
 
 Pi integration can expose `agent_spawn`, `agent_status`, `agent_wait`, `agent_result`, and `agent_cancel` as a thin tool extension. The extension requests Tsukai operations; it does not own a hidden child-agent runtime. Tool wiring and process isolation are not alternatives: an extension may request independently supervised child processes.
 
+`create` may also carry an immutable, caller-admitted execution profile (provider, model, admitted tools, admitted harness extensions such as governance guards). The caller owns that policy; Tsukai validates it against the selected adapter's advertised configurability, binds it to the AgentRun at creation, projects it deterministically into the harness-native invocation submitted to Jinushi, and persists its safe identity so restart cannot change it. The profile is not an argv, environment, or workspace escape hatch: it cannot set cwd or widen the separately admitted workspace. Omitting it keeps default deny (no tools, no extensions). See `M5.5-PROFILE.md`.
+
 An authorized parent receives access scoped to its allowed runs and workspace permissions. Lineage alone does not confer authorization. Do not give an agent an unrestricted control token for every runtime run. Automatic task decomposition, recursive scheduling, policy-driven retries, prompt construction, and judging results remain outside Tsukai.
 
 ## 6. Pi integration contract
@@ -142,6 +144,7 @@ Delivery after M0 is gated as follows:
 - **M3 — agent-facing control:** scoped parent-agent spawn/status/wait/result/cancel tools over independent AgentRuns.
 - **M4 — operator observation:** fleet/tree/timeline/resource/usage consumers and replay/profiling UI.
 - **M5 — multi-harness:** add capability-aware harness adapters without reducing Pi-native observation to a lowest-common-denominator schema.
+- **M5.5 — admitted execution profiles:** typed, immutable, capability-checked provider/model/tool/extension configuration of an AgentRun; prerequisite discovered in the M6 preflight (#25).
 - **M6 — Mottainai adoption:** move AgentRun lifecycle/observation responsibility out of Mottainai while leaving decomposition, scheduling, prompt/context policy, and evaluation there.
 
 `IMPLEMENTATION.md` selects the currently authorized milestone and its acceptance criteria. Completion of one milestone is not authorization to continue automatically into the next.

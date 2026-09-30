@@ -1,3 +1,5 @@
+import type { EffectiveExecutionProfile, ExecutionProfile } from "./profile.js";
+
 export type JsonValue =
   null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 export type JsonObject = { [key: string]: JsonValue };
@@ -44,7 +46,10 @@ export interface RunCreateInput<
    */
   spawnedBy?: string;
   metadata?: Record<string, string>;
+  /** Separately admitted workspace scope; the execution profile cannot change it. */
   workspace?: { cwd: string; workspaceSessionId?: string };
+  /** Immutable harness execution profile. Omitted: default deny. */
+  executionProfile?: ExecutionProfile;
 }
 
 export interface PhysicalReceipt {
@@ -100,6 +105,8 @@ export interface RunSnapshot {
   harness: { name: HarnessName; version: string };
   metadata: Record<string, string>;
   workspace?: { cwd: string; workspaceSessionId?: string };
+  /** Safe effective profile bound at creation; absent means default deny. */
+  executionProfile?: EffectiveExecutionProfile;
   lifecycle: Lifecycle;
   semantic: SemanticState;
   activity: Activity;

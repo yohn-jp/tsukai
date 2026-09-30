@@ -69,9 +69,10 @@ try {
   ]);
 
   const script = `import assert from 'node:assert/strict';
-import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createRunService, createMockHarness, startResidentOwner, connectOwner, createFileDurableStore, collectLiveProjection, projectReplay, renderOperatorProjection, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION, createHarnessRuntime, createPiHarnessAdapter, createClaudeCodeHarnessAdapter, createJinushiClaudeCodeExecutionPort, HarnessCapabilityError, PI_CAPABILITIES, CLAUDE_CODE_CAPABILITIES, SUPPORTED_CLAUDE_CODE_VERSION } from 'tsukai';
+import { createMemoryJournal, replayJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createRunService, createMockHarness, startResidentOwner, connectOwner, createFileDurableStore, collectLiveProjection, projectReplay, renderOperatorProjection, SUPPORTED_PI_VERSION, SUPPORTED_PI_REVISION, createHarnessRuntime, createPiHarnessAdapter, createClaudeCodeHarnessAdapter, createJinushiClaudeCodeExecutionPort, HarnessCapabilityError, PI_CAPABILITIES, CLAUDE_CODE_CAPABILITIES, SUPPORTED_CLAUDE_CODE_VERSION, ExecutionProfileError, EXECUTION_PROFILE_SCHEMA_VERSION, executionProfileFingerprint, PI_EXECUTION_PROFILE_CAPABILITIES, CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES } from 'tsukai';
 import { createMockRuntime, createMockExecutionPort, createPiCertificationExecutionPort } from 'tsukai/testing';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, realpathSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 const journal = createMemoryJournal();
@@ -102,6 +103,66 @@ assert.equal(typeof createJinushiClaudeCodeExecutionPort, 'function');
   await assert.rejects(multi.runs.create({ harness: 'codex', request: { prompt: 'x' } }), /Unsupported/);
   assert.equal(new HarnessCapabilityError('pi', 'steer', 'available').code, 'HARNESS_CAPABILITY_UNSUPPORTED');
   await multi.dispose();
+}
+// Execution profile (#25) through the public package and the owner IPC.
+{
+  assert.equal(EXECUTION_PROFILE_SCHEMA_VERSION, 1);
+  assert.equal(PI_CAPABILITIES.executionProfile.tools.tsukai, 'configurable');
+  assert.equal(PI_EXECUTION_PROFILE_CAPABILITIES.model.verification, 'exact');
+  assert.equal(CLAUDE_CODE_CAPABILITIES.executionProfile.provider.tsukai, 'unsupported');
+  assert.equal(CLAUDE_CODE_EXECUTION_PROFILE_CAPABILITIES.model.tsukai, 'configurable');
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'tsukai-profile-')));
+  const extension = join(dir, 'guard.ts');
+  const body = 'export default () => {};';
+  writeFileSync(extension, body);
+  const sha256 = createHash('sha256').update(body).digest('hex');
+  // A Jinushi-protocol stub records the submitted Run specification and
+  // refuses to start it; the profile must already be bound and projected.
+  const specs = [];
+  const client = {
+    async capabilities() { return { backend: 'consumer-stub' }; },
+    async run(_submissionId, spec) { specs.push(spec); throw new Error('consumer stub does not start processes'); },
+  };
+  const stateDir = join(dir, 'owner');
+  const owner = await startResidentOwner({
+    stateDir,
+    createService: (store) => createPiRuntime({
+      execution: createJinushiPiExecutionPort({ client, executable: '/opt/pi/bin/pi', environment: { mode: 'replace', set: {} } }),
+      piVersion: SUPPORTED_PI_VERSION,
+      piRevision: SUPPORTED_PI_REVISION,
+      durableStore: store,
+    }),
+  });
+  const operator = await connectOwner({ stateDir });
+  try {
+    const capabilities = await (async () => {
+      const probe = await operator.runs.create({ harness: 'pi', request: { prompt: 'probe' }, workspace: { cwd: dir } });
+      return operator.runs.capabilities(probe.agentRunId);
+    })();
+    assert.equal(capabilities.executionProfile.extensions.tsukai, 'configurable');
+    const profile = {
+      schemaVersion: 1,
+      provider: 'acme',
+      model: 'coder-1',
+      tools: [{ source: 'builtin', name: 'read' }, { source: 'extension', extension: 'guard', name: 'governed_execution' }],
+      extensions: [{ id: 'guard', path: extension, sha256 }],
+    };
+    const created = await operator.runs.create({ harness: 'pi', request: { prompt: 'p' }, workspace: { cwd: dir }, executionProfile: profile });
+    const inspected = await operator.runs.get(created.agentRunId);
+    assert.deepEqual(inspected.executionProfile.extensions, [{ id: 'guard', sha256 }]);
+    assert.equal(inspected.executionProfile.fingerprint, executionProfileFingerprint(inspected.executionProfile));
+    assert.deepEqual(specs.at(-1).argv.slice(-8), ['--provider', 'acme', '--model', 'coder-1', '--tools', 'governed_execution,read', '--extension', extension]);
+    assert.equal(specs.at(-1).cwd, dir);
+    await assert.rejects(
+      operator.runs.create({ harness: 'pi', request: { prompt: 'p' }, executionProfile: { schemaVersion: 1, argv: ['--mode', 'json'] } }),
+      (error) => error.code === 'EXECUTION_PROFILE_INVALID',
+    );
+    assert.equal(new ExecutionProfileError('EXECUTION_PROFILE_UNSUPPORTED', 'pi', 'tools', 'x').code, 'EXECUTION_PROFILE_UNSUPPORTED');
+  } finally {
+    await operator.close();
+    await owner.close('detach');
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 assert.equal(SUPPORTED_PI_REVISION, 'd86654abb8862e201933517d6f1fce9f88dd117f');
 assert.equal(journal.read('missing').items.length, 0);
@@ -181,7 +242,7 @@ try {
 
   await writeFile(
     join(consumer, "types.ts"),
-    `import { type RunSnapshot, type PiDuplexExecutionPort, type PiRunCreateInput, type DurableStore, type OwnerClient, type ResidentOwner, type HarnessCapabilities, type HarnessAdapter, type ClaudeCodeRunCreateInput, createMemoryJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, startResidentOwner, connectOwner } from 'tsukai';\nimport { createMockRuntime, createPiCertificationExecutionPort } from 'tsukai/testing';\nconst journal = createMemoryJournal();\nconst runtime = createMockRuntime();\nconst port: PiDuplexExecutionPort | undefined = undefined;\nconst input: PiRunCreateInput = { harness: 'pi', request: { prompt: 'hello' } };\nconst snapshot: RunSnapshot | undefined = undefined;\nconst store: DurableStore | undefined = undefined;\nconst owner: ResidentOwner | undefined = undefined;\nconst ownerClient: OwnerClient | undefined = undefined;\nconst caps: HarnessCapabilities | undefined = undefined;\nconst adapter: HarnessAdapter | undefined = undefined;\nconst claudeInput: ClaudeCodeRunCreateInput = { harness: 'claude-code', request: { prompt: 'hello' } };\nvoid [caps, adapter, claudeInput, journal, runtime, port, input, snapshot, store, owner, ownerClient, startResidentOwner, connectOwner, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createPiCertificationExecutionPort];\n`,
+    `import { type RunSnapshot, type PiDuplexExecutionPort, type PiRunCreateInput, type DurableStore, type OwnerClient, type ResidentOwner, type HarnessCapabilities, type HarnessAdapter, type ClaudeCodeRunCreateInput, type ExecutionProfile, type EffectiveExecutionProfile, type ExecutionProfileCapabilities, createMemoryJournal, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, startResidentOwner, connectOwner } from 'tsukai';\nimport { createMockRuntime, createPiCertificationExecutionPort } from 'tsukai/testing';\nconst journal = createMemoryJournal();\nconst runtime = createMockRuntime();\nconst port: PiDuplexExecutionPort | undefined = undefined;\nconst input: PiRunCreateInput = { harness: 'pi', request: { prompt: 'hello' } };\nconst snapshot: RunSnapshot | undefined = undefined;\nconst store: DurableStore | undefined = undefined;\nconst owner: ResidentOwner | undefined = undefined;\nconst ownerClient: OwnerClient | undefined = undefined;\nconst caps: HarnessCapabilities | undefined = undefined;\nconst adapter: HarnessAdapter | undefined = undefined;\nconst claudeInput: ClaudeCodeRunCreateInput = { harness: 'claude-code', request: { prompt: 'hello' } };\nconst profile: ExecutionProfile = { schemaVersion: 1, model: 'm', tools: [{ source: 'builtin', name: 'read' }] };\nconst profiled: PiRunCreateInput = { harness: 'pi', request: { prompt: 'hello' }, executionProfile: profile };\nconst effective = (value: RunSnapshot): EffectiveExecutionProfile | undefined => value.executionProfile;\nconst profileCaps = (value: HarnessCapabilities): ExecutionProfileCapabilities => value.executionProfile;\nvoid [profiled, effective, profileCaps, caps, adapter, claudeInput, journal, runtime, port, input, snapshot, store, owner, ownerClient, startResidentOwner, connectOwner, createPiRuntime, createJinushiClient, createJinushiPiExecutionPort, createPiCertificationExecutionPort];\n`,
   );
   await writeFile(
     join(consumer, "tsconfig.json"),

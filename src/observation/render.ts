@@ -35,7 +35,17 @@ function runLine(run: FleetRun): string {
         `${escapeDisplayText(key)}=${escapeDisplayText(run.metadata[key]!)}`,
     )
     .join(",");
-  return `${escapeDisplayText(run.agentRunId)} parent=${escapeDisplayText(run.parentRunId ?? "-")} lineage=${run.lineage} lifecycle=${run.lifecycle} semantic=${run.semantic} outcome=${escapeDisplayText(run.outcome ?? "-")} completeness=${run.completeness} metadata=${metadata || "-"} created=${value(run.timing.createdAt)} updated=${value(run.timing.updatedAt)} started=${value(run.timing.startedAt)} terminal=${value(run.timing.terminalAt)}`;
+  return `${escapeDisplayText(run.agentRunId)} parent=${escapeDisplayText(run.parentRunId ?? "-")} lineage=${run.lineage} lifecycle=${run.lifecycle} semantic=${run.semantic} outcome=${escapeDisplayText(run.outcome ?? "-")} completeness=${run.completeness} metadata=${metadata || "-"} created=${value(run.timing.createdAt)} updated=${value(run.timing.updatedAt)} started=${value(run.timing.startedAt)} terminal=${value(run.timing.terminalAt)}${profileText(run)}`;
+}
+
+/** Safe profile identity; absent for default-deny runs so older output is unchanged. */
+function profileText(run: FleetRun): string {
+  const profile = run.executionProfile;
+  if (profile === undefined) return "";
+  const tools = profile.tools.map((tool) => tool.name).join(",") || "-";
+  const extensions =
+    profile.extensions.map((extension) => extension.id).join(",") || "-";
+  return ` profile=${escapeDisplayText(profile.fingerprint)} provider=${escapeDisplayText(profile.provider ?? "-")} model=${escapeDisplayText(profile.model ?? "-")} tools=${escapeDisplayText(tools)} extensions=${escapeDisplayText(extensions)}`;
 }
 
 function treeLines(node: RunTreeNode, indent: string, lines: string[]): void {
