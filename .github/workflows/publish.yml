@@ -1,5 +1,9 @@
 name: Publish to npm
 
+# Canonical wrapper distributed via .github/sync.yml (SKIP_PR: true, direct
+# push) — do not hand-edit in a consumer repository; edit this file in
+# yohn-jp/.github instead.
+
 on:
   release:
     types: [published]
@@ -10,6 +14,8 @@ permissions:
 jobs:
   publish:
     uses: yohn-jp/.github/.github/workflows/npm-publish.yml@main
+    with:
+      certification-verification-script: scripts/verify-release-certification.mjs
     permissions:
       actions: read
       contents: read
