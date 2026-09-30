@@ -18,7 +18,7 @@ pnpm exec tsukai demo --json > demo.jsonl
 pnpm exec tsukai replay demo.jsonl --json
 ```
 
-`tsukai@0.1.0` on npm predates the resident owner and the M2–M5.5 surface; consumers of that surface should use a later release or a tarball from `pnpm pack`. The package exports the SDK, Pi adapter, and observation/replay utilities at `tsukai`. Explicit mock fixtures and the direct Pi certification runner are at `tsukai/testing`.
+Version 0.2.0 ([release notes](docs/releases/0.2.0.md)) is the first version that carries the resident owner and the M2–M5.5 surface. `tsukai@0.1.0` predates them. `pnpm pack` produces an installable tarball of any revision. The package exports the SDK, Pi adapter, and observation/replay utilities at `tsukai`. Explicit mock fixtures and the direct Pi certification runner are at `tsukai/testing`.
 
 ```ts
 import { createMockRuntime } from "tsukai/testing";

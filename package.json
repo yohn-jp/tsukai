@@ -1,6 +1,6 @@
 {
   "name": "tsukai",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "AgentRun lifecycle and observation SDK with Pi RPC integration",
   "type": "module",
   "engines": {
