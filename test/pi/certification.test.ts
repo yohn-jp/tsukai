@@ -1,13 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-  access,
-  chmod,
-  constants,
-  mkdtemp,
-  rm,
-  writeFile,
-} from "node:fs/promises";
-import { delimiter, join, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 import type { PhysicalReceipt } from "../../src/contracts/types.js";
@@ -170,23 +165,6 @@ async function makeExecutable(
   await writeFile(path, `#!/usr/bin/env node\n${body}`, { mode: 0o700 });
   await chmod(path, 0o700);
   return { root, path };
-}
-
-async function findExecutable(executable: string): Promise<string | undefined> {
-  const candidates = executable.includes("/")
-    ? [resolve(executable)]
-    : (process.env.PATH ?? "")
-        .split(delimiter)
-        .map((directory) => join(directory, executable));
-  for (const candidate of candidates) {
-    try {
-      await access(candidate, constants.X_OK);
-      return candidate;
-    } catch {
-      // Check the remaining PATH entries.
-    }
-  }
-  return undefined;
 }
 
 async function sendGetState(
@@ -417,16 +395,30 @@ setInterval(() => {}, 1000);
   });
 });
 
-const configuredPi = process.env.PI_EXECUTABLE ?? "pi";
-const installedPi = await findExecutable(configuredPi);
+// The exact published Pi artifact is a pinned devDependency. `pnpm run
+// certify:pi` additionally verifies its lockfile integrity and file digest.
+const pinnedPi = fileURLToPath(
+  new URL(
+    "../../node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js",
+    import.meta.url,
+  ),
+);
+const installedPi = process.env.PI_EXECUTABLE ?? pinnedPi;
 
-describe.skipIf(installedPi === undefined)(
+describe("pinned Pi artifact", () => {
+  it("resolves an absolute, installed Pi executable", () => {
+    expect(isAbsolute(installedPi)).toBe(true);
+    expect(existsSync(installedPi)).toBe(true);
+  });
+});
+
+describe.skipIf(!existsSync(installedPi))(
   "installed Pi RPC transport certification",
   () => {
     it("correlates get_state, captures sessionId, and exits cleanly without a model call", async () => {
       const capture = new Capture();
       const port = createPiCertificationExecutionPort({
-        executable: installedPi ?? "pi",
+        executable: installedPi,
       });
       try {
         const execution = await port.open(

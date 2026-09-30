@@ -24,14 +24,16 @@ import { createMemoryJournal } from "../../observation/journal.js";
 import { createPiRpcClient, type PiRpcClient } from "./protocol.js";
 import { createPiHarness } from "./semantic.js";
 
-export const SUPPORTED_PI_VERSION = "0.87.1";
-export const SUPPORTED_PI_REVISION = "2b0a123de98318c2ff8069661721ce0c3794c34e";
+/** Published `@earendil-works/pi-coding-agent` npm version certified for Pi RPC. */
+export const SUPPORTED_PI_VERSION = "0.99.1";
+/** Upstream commit of the audited Pi `v0.99.1` release tag. */
+export const SUPPORTED_PI_REVISION = "d86654abb8862e201933517d6f1fce9f88dd117f";
 
 export interface PiRuntimeOptions {
   /** Physical ownership is supplied by the caller; this adapter never spawns Pi. */
   execution: PiDuplexExecutionPort;
   piVersion: string;
-  /** Source revision used to build the certified Pi executable. */
+  /** Upstream release commit of the certified published Pi artifact. */
   piRevision: string;
   journal?: JournalPort;
   limits?: Partial<RuntimeLimits>;

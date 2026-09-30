@@ -6,9 +6,17 @@ import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8", timeout: 30_000 });
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
   if (result.error) throw result.error;
-  assert.equal(result.status, 0, `${command} ${args.join(" ")} failed:\n${result.stdout}\n${result.stderr}`);
+  assert.equal(
+    result.status,
+    0,
+    `${command} ${args.join(" ")} failed:\n${result.stdout}\n${result.stderr}`,
+  );
   return result.stdout;
 }
 
@@ -20,8 +28,15 @@ assert.ok(existsSync(tarball), `tarball not found: ${tarball}`);
 
 const consumer = mkdtempSync(join(tmpdir(), "tsukai-smoke-"));
 try {
-  writeFileSync(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module" }));
-  run("npm", ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball], consumer);
+  writeFileSync(
+    join(consumer, "package.json"),
+    JSON.stringify({ private: true, type: "module" }),
+  );
+  run(
+    "npm",
+    ["install", "--ignore-scripts", "--no-audit", "--no-fund", tarball],
+    consumer,
+  );
 
   const bin = join(consumer, "node_modules", ".bin", "tsukai");
   assert.ok(existsSync(bin), "npm did not create the tsukai launcher");

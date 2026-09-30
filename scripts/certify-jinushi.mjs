@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute } from "node:path";
 import {
   createJinushiClient,
   createJinushiPiExecutionPort,
@@ -10,9 +9,8 @@ import {
   SUPPORTED_PI_VERSION,
 } from "../dist/index.js";
 import { createPiRpcClient } from "../dist/adapters/pi/protocol.js";
+import { resolveCertifiedPi } from "./pi-artifact.mjs";
 
-const executable = process.env.TSUKAI_PI_EXECUTABLE;
-const sourceDir = process.env.TSUKAI_PI_SOURCE_DIR;
 const stateDir = process.env.TSUKAI_JINUSHI_STATE_DIR;
 const workspace = process.env.TSUKAI_JINUSHI_WORKSPACE;
 
@@ -22,50 +20,12 @@ function requireAbsolute(name, value) {
   return realpathSync(value);
 }
 
-function verifyPiSource() {
-  const sourceRoot = requireAbsolute("TSUKAI_PI_SOURCE_DIR", sourceDir);
-  const actualExecutable = requireAbsolute("TSUKAI_PI_EXECUTABLE", executable);
-  const executableWithinSource = relative(sourceRoot, actualExecutable);
-  assert(
-    executableWithinSource &&
-      !executableWithinSource.startsWith("..") &&
-      !isAbsolute(executableWithinSource),
-    "Pi executable must be inside the fixed upstream checkout",
-  );
-  const sourceRevision = execFileSync(
-    "git",
-    ["-C", sourceRoot, "rev-parse", "HEAD"],
-    { encoding: "utf8", timeout: 10_000 },
-  ).trim();
-  assert.equal(
-    sourceRevision,
-    SUPPORTED_PI_REVISION,
-    "Pi source revision is unsupported",
-  );
-  const trackedChanges = execFileSync(
-    "git",
-    ["-C", sourceRoot, "status", "--porcelain", "--untracked-files=no"],
-    { encoding: "utf8", timeout: 10_000 },
-  ).trim();
-  assert.equal(trackedChanges, "", "Pi source checkout must be clean");
-  const version = execFileSync(actualExecutable, ["--version"], {
-    encoding: "utf8",
-    timeout: 10_000,
-  }).trim();
-  assert.equal(
-    version,
-    SUPPORTED_PI_VERSION,
-    "Installed Pi version is unsupported",
-  );
-  return actualExecutable;
-}
-
 async function certifyJinushi() {
-  const actualExecutable = verifyPiSource();
-  const actualStateDir = requireAbsolute(
-    "TSUKAI_JINUSHI_STATE_DIR",
-    stateDir,
+  const { executable: actualExecutable, provenance } = resolveCertifiedPi(
+    SUPPORTED_PI_VERSION,
+    process.env.TSUKAI_PI_EXECUTABLE,
   );
+  const actualStateDir = requireAbsolute("TSUKAI_JINUSHI_STATE_DIR", stateDir);
   const actualWorkspace = requireAbsolute(
     "TSUKAI_JINUSHI_WORKSPACE",
     workspace,
@@ -133,6 +93,7 @@ async function certifyJinushi() {
         exitCode: receipt.exitCode,
         piVersion: SUPPORTED_PI_VERSION,
         piRevision: SUPPORTED_PI_REVISION,
+        ...provenance,
       }),
     );
   } finally {

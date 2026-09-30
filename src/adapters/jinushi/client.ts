@@ -323,11 +323,7 @@ export function createJinushiClient(
       return result;
     },
 
-    async cancel(
-      runId: string,
-      requestId: string,
-      expectedGeneration: number,
-    ) {
+    async cancel(runId: string, requestId: string, expectedGeneration: number) {
       validateRunId(runId, "cancel");
       validateControlIdentity(requestId, expectedGeneration, "cancel");
       return requiredRun(
@@ -1107,7 +1103,10 @@ function validateIdentity(
     value.includes("\r") ||
     value.includes("\n")
   ) {
-    throw validationError(operation, `${name} must be between 1 and 128 safe bytes`);
+    throw validationError(
+      operation,
+      `${name} must be between 1 and 128 safe bytes`,
+    );
   }
 }
 

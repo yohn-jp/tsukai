@@ -74,7 +74,9 @@ describe("Jinushi protocol v1 client", () => {
       runId: "run_abc",
       state: "accepted",
     });
-    expect(await client.acquireWriter("run_abc", "owner-1")).toBe("writer-token");
+    expect(await client.acquireWriter("run_abc", "owner-1")).toBe(
+      "writer-token",
+    );
     await client.input(
       "run_abc",
       "input-1",
@@ -198,7 +200,13 @@ describe("Jinushi protocol v1 client", () => {
     [
       "input",
       async (client: ReturnType<typeof createJinushiClient>) =>
-        client.input("run_abc", "input-retry", 1, "writer-token", new Uint8Array([7])),
+        client.input(
+          "run_abc",
+          "input-retry",
+          1,
+          "writer-token",
+          new Uint8Array([7]),
+        ),
     ],
   ])(
     "marks a lost %s response uncertain and does not retry",
