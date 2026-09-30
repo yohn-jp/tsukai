@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /**
@@ -142,11 +150,26 @@ export function resolveCertifiedPi(version, executableOverride) {
     PI_ARTIFACT_FILES_DIGEST,
     "Installed Pi files differ from the audited published artifact",
   );
-  const reported = execFileSync(executable, ["--version"], {
-    encoding: "utf8",
-    timeout: 10_000,
-    env: { PATH: process.env.PATH, PI_OFFLINE: "1", PI_TELEMETRY: "0" },
-  }).trim();
+  // Isolate Pi's configuration directory so the version probe never touches
+  // the caller's home or auth state.
+  const home = mkdtempSync(join(tmpdir(), "tsukai-pi-version-"));
+  let reported;
+  try {
+    reported = execFileSync(executable, ["--version"], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        PATH: process.env.PATH,
+        HOME: home,
+        USERPROFILE: home,
+        PI_CODING_AGENT_DIR: join(home, "agent"),
+        PI_OFFLINE: "1",
+        PI_TELEMETRY: "0",
+      },
+    }).trim();
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
   assert.equal(reported, version, "Pi --version is unsupported");
   return {
     executable,
