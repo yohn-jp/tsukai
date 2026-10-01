@@ -7,7 +7,7 @@ import {
 } from "../observation/index.js";
 import { ownerCommand } from "./owner.js";
 
-const VERSION = "0.2.1";
+const VERSION = "0.2.2";
 const HELP = `tsukai ${VERSION} — AgentRun lifecycle and observation
 
 Usage:

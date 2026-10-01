@@ -21,7 +21,7 @@ Remaining work is limited to the open canonical Issues under Epic #10, in this o
 
 1. #29 — restore canonical green GitHub CI and repository governance (Typecheck without build-order dependence, Inari snapshot provenance).
 2. #28 — repair the `certify:agent` restart lane against M2 uncertainty semantics.
-3. #27 — release the post-M5.5 public API as a consumable npm package. The package is prepared as 0.2.1 ([release notes](releases/0.2.1.md)); the `v0.2.0` release failed before publication because the consumer-owned certification gate was missing. The Issue closes only after the `v0.2.1` GitHub Release has run the publish workflow and a clean consumer of the registry artifact has been verified.
+3. #27 — release the post-M5.5 public API as a consumable npm package. The package is prepared as 0.2.2 ([release notes](releases/0.2.2.md)); the `v0.2.0` release failed before publication because the consumer-owned certification gate was missing, and `v0.2.1` because `package.json` had no `repository.url`. The Issue closes only after the `v0.2.2` GitHub Release has run the publish workflow and a clean consumer of the registry artifact has been verified.
 4. #17 (with yohn-jp/mottainai#984 as the Mottainai-side implementation authority) — M6 Mottainai adoption, consuming the released package.
 5. Final canonical audit of both repositories, then closure of Epic #10 only once M6 is proven end-to-end.
 
