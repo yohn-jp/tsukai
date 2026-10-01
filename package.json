@@ -1,6 +1,6 @@
 {
   "name": "tsukai",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "AgentRun lifecycle and observation SDK with Pi RPC integration",
   "type": "module",
   "engines": {
@@ -52,6 +52,7 @@
     "@types/node": "^24.0.0",
     "eslint": "10.11.0",
     "prettier": "^3.6.2",
+    "tsx": "4.23.15",
     "typescript": "^5.9.3",
     "typescript-eslint": "8.70.0",
     "vitest": "^3.2.4"
