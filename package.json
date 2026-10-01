@@ -1,7 +1,15 @@
 {
   "name": "tsukai",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "AgentRun lifecycle and observation SDK with Pi RPC integration",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yohn-jp/tsukai.git"
+  },
+  "homepage": "https://github.com/yohn-jp/tsukai#readme",
+  "bugs": {
+    "url": "https://github.com/yohn-jp/tsukai/issues"
+  },
   "type": "module",
   "engines": {
     "node": ">=24"
